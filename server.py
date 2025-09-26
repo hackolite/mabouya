@@ -204,7 +204,11 @@ class MinecraftServer:
     
     async def start(self):
         """Démarre le serveur"""
-        async with websockets.serve(self.handle_client, self.host, self.port):
+        async with websockets.serve(
+            lambda websocket: self.handle_client(websocket, None), 
+            self.host, 
+            self.port
+        ):
             print(f"🎮 Serveur Minecraft démarré sur ws://{self.host}:{self.port}")
             print(f"📦 Monde: {len(self.world.blocks)} blocs")
             await asyncio.Future()  # Run forever
@@ -388,34 +392,50 @@ class MinecraftServer:
     
     async def camera_stream_loop(self, camera):
         """Boucle de streaming caméra"""
-        fps = 10  # 10 FPS pour la démo
+        fps = 5  # Réduit à 5 FPS pour éviter la surcharge
+        print(f"🎬 Démarrage streaming caméra {camera.id}")
         
-        while camera.id in self.world.cameras:
-            # Rendu de la vue caméra
-            frame_data = camera.render_view(self.world)
-            
-            # Encode en base64
-            frame_b64 = base64.b64encode(frame_data).decode('utf-8')
-            
-            # Message de frame
-            message = json.dumps({
-                "type": "camera_frame",
-                "camera_id": camera.id,
-                "width": camera.resolution[0],
-                "height": camera.resolution[1],
-                "frame": frame_b64,
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            # Envoie aux abonnés
-            subscribers = list(self.camera_subscribers.get(camera.id, set()))
-            for ws in subscribers:
-                try:
-                    await ws.send(message)
-                except:
-                    self.camera_subscribers[camera.id].discard(ws)
-            
-            await asyncio.sleep(1/fps)
+        try:
+            frame_count = 0
+            while camera.id in self.world.cameras:
+                frame_count += 1
+                
+                # Rendu de la vue caméra
+                frame_data = camera.render_view(self.world)
+                
+                # Encode en base64
+                frame_b64 = base64.b64encode(frame_data).decode('utf-8')
+                
+                # Message de frame
+                message = json.dumps({
+                    "type": "camera_frame",
+                    "camera_id": camera.id,
+                    "width": camera.resolution[0],
+                    "height": camera.resolution[1],
+                    "frame": frame_b64,
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+                # Envoie aux abonnés
+                subscribers = list(self.camera_subscribers.get(camera.id, set()))
+                
+                if subscribers:
+                    for ws in subscribers:
+                        try:
+                            await ws.send(message)
+                            print(f"✅ Frame #{frame_count} envoyée pour {camera.id}")
+                        except Exception as e:
+                            print(f"❌ Erreur envoi frame #{frame_count}: {e}")
+                            self.camera_subscribers[camera.id].discard(ws)
+                
+                await asyncio.sleep(1/fps)
+                
+        except Exception as e:
+            print(f"❌ Erreur dans streaming loop: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print(f"🛑 Arrêt streaming caméra {camera.id}")
 
 if __name__ == "__main__":
     server = MinecraftServer()
