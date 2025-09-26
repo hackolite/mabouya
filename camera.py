@@ -18,8 +18,10 @@ import websockets
 import json
 import base64
 import sys
+import os
 from io import BytesIO
 import numpy as np
+import argparse
 
 try:
     import cv2
@@ -34,14 +36,22 @@ try:
 except ImportError:
     HAS_PIL = False
 
+# Détecte si on est dans un environnement sans display
+HEADLESS = os.environ.get('DISPLAY') is None or os.environ.get('HEADLESS') == '1'
+
 class CameraViewer:
-    def __init__(self, camera_id, uri="ws://localhost:8765"):
+    def __init__(self, camera_id, uri="ws://localhost:8765", headless=False, save_frames=False):
         self.camera_id = camera_id
         self.uri = uri
         self.websocket = None
         self.running = False
         self.frame_count = 0
-        self.use_opencv = HAS_OPENCV
+        self.headless = headless or HEADLESS
+        self.save_frames = save_frames
+        self.use_opencv = HAS_OPENCV and not self.headless
+        
+        if self.headless:
+            print("🖥️  Mode sans affichage activé")
         
     async def connect(self):
         """Connexion au serveur"""
@@ -62,7 +72,10 @@ class CameraViewer:
         
         if data["type"] == "subscribed":
             print(f"✅ Abonné à la caméra {self.camera_id}")
-            print("Appuyez sur 'q' pour quitter, 's' pour sauvegarder une frame")
+            if self.headless:
+                print("Mode sans affichage - Appuyez sur Ctrl+C pour quitter")
+            else:
+                print("Appuyez sur 'q' pour quitter, 's' pour sauvegarder une frame")
             self.running = True
         else:
             error_msg = data.get('message', "Impossible de s'abonner")
@@ -85,79 +98,118 @@ class CameraViewer:
     async def stream_loop(self):
         """Boucle de réception et affichage"""
         if self.use_opencv:
-            cv2.namedWindow(f"Camera {self.camera_id}", cv2.WINDOW_NORMAL)
+            try:
+                cv2.namedWindow(f"Camera {self.camera_id}", cv2.WINDOW_NORMAL)
+            except Exception as e:
+                print(f"⚠️  Impossible d'ouvrir la fenêtre d'affichage: {e}")
+                print("🖥️  Basculement en mode sans affichage")
+                self.headless = True
+                self.use_opencv = False
         
         try:
             while self.running:
                 # Reçoit une frame
-                message = await asyncio.wait_for(self.websocket.recv(), timeout=2.0)
+                message = await asyncio.wait_for(self.websocket.recv(), timeout=10.0)
                 data = json.loads(message)
                 
                 if data["type"] == "camera_frame":
                     self.frame_count += 1
                     
-                    # Décode la frame
-                    frame = self.decode_frame(
-                        data["frame"],
-                        data["width"],
-                        data["height"]
-                    )
-                    
-                    # Affiche avec OpenCV ou PIL
-                    if self.use_opencv:
-                        # OpenCV utilise BGR, on convertit
-                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    if self.headless:
+                        # Mode sans affichage - juste les stats
+                        if self.frame_count == 1:
+                            print(f"📺 Première frame reçue (taille: {data['width']}x{data['height']})")
+                        elif self.frame_count % 10 == 0:
+                            print(f"📊 {self.frame_count} frames reçues")
                         
-                        # Ajoute infos sur l'image
-                        cv2.putText(
-                            frame_bgr,
-                            f"Frame: {self.frame_count}",
-                            (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            (0, 255, 0),
-                            2
-                        )
-                        
-                        cv2.putText(
-                            frame_bgr,
-                            f"Camera: {self.camera_id[:8]}...",
-                            (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (255, 255, 255),
-                            1
-                        )
-                        
-                        # Affiche
-                        cv2.imshow(f"Camera {self.camera_id}", frame_bgr)
-                        
-                        # Gestion des touches
-                        key = cv2.waitKey(1) & 0xFF
-                        if key == ord('q'):
-                            self.running = False
-                        elif key == ord('s'):
-                            filename = f"camera_{self.camera_id}_{self.frame_count}.jpg"
-                            cv2.imwrite(filename, frame_bgr)
-                            print(f"💾 Frame sauvegardée: {filename}")
-                    
+                        # Sauvegarde optionnelle
+                        if self.save_frames and (self.frame_count % 20 == 0):  # Toutes les 20 frames
+                            frame = self.decode_frame(
+                                data["frame"],
+                                data["width"],
+                                data["height"]
+                            )
+                            filename = f"camera_{self.camera_id[:8]}_{self.frame_count}.png"
+                            if HAS_PIL:
+                                img = Image.fromarray(frame)
+                                img.save(filename)
+                                print(f"💾 Frame sauvegardée: {filename}")
                     else:
-                        # Affichage PIL (moins interactif)
-                        if self.frame_count % 10 == 0:  # Affiche toutes les 10 frames
-                            img = Image.fromarray(frame)
-                            img.show(title=f"Camera {self.camera_id} - Frame {self.frame_count}")
-                    
-                    # Stats toutes les 30 frames
-                    if self.frame_count % 30 == 0:
-                        print(f"📊 {self.frame_count} frames reçues")
+                        # Mode avec affichage
+                        frame = self.decode_frame(
+                            data["frame"],
+                            data["width"],
+                            data["height"]
+                        )
+                        
+                        # Affiche avec OpenCV ou PIL
+                        if self.use_opencv:
+                            # OpenCV utilise BGR, on convertit
+                            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                            
+                            # Ajoute infos sur l'image
+                            cv2.putText(
+                                frame_bgr,
+                                f"Frame: {self.frame_count}",
+                                (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.7,
+                                (0, 255, 0),
+                                2
+                            )
+                            
+                            cv2.putText(
+                                frame_bgr,
+                                f"Camera: {self.camera_id[:8]}...",
+                                (10, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                (255, 255, 255),
+                                1
+                            )
+                            
+                            # Affiche
+                            cv2.imshow(f"Camera {self.camera_id}", frame_bgr)
+                            
+                            # Gestion des touches
+                            key = cv2.waitKey(1) & 0xFF
+                            if key == ord('q'):
+                                self.running = False
+                            elif key == ord('s'):
+                                filename = f"camera_{self.camera_id}_{self.frame_count}.jpg"
+                                cv2.imwrite(filename, frame_bgr)
+                                print(f"💾 Frame sauvegardée: {filename}")
+                        
+                        else:
+                            # Affichage PIL (moins interactif)
+                            if self.frame_count % 10 == 0:  # Affiche toutes les 10 frames
+                                try:
+                                    img = Image.fromarray(frame)
+                                    img.show(title=f"Camera {self.camera_id} - Frame {self.frame_count}")
+                                except Exception as e:
+                                    print(f"⚠️  Impossible d'afficher l'image: {e}")
+                                    print("🖥️  Basculement en mode sans affichage")
+                                    self.headless = True
+                        
+                        # Stats toutes les 30 frames
+                        if self.frame_count % 30 == 0:
+                            print(f"📊 {self.frame_count} frames reçues")
         
         except asyncio.TimeoutError:
-            print("⏱️  Timeout - Pas de frames reçues")
+            print("⏱️  Timeout - Pas de frames reçues dans les 10 secondes")
+            print("💡 Vérifiez que le serveur est démarré et que la caméra existe")
         except KeyboardInterrupt:
             print("\n⏹️  Arrêté par l'utilisateur")
+        except Exception as e:
+            print(f"❌ Erreur lors de la réception: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             if self.use_opencv:
-                cv2.destroyAllWindows()
+                try:
+                    cv2.destroyAllWindows()
+                except:
+                    pass
     
     async def start(self):
         """Démarre le viewer"""
@@ -199,17 +251,23 @@ async def list_cameras(uri="ws://localhost:8765"):
 
 async def main():
     """Point d'entrée principal"""
+    parser = argparse.ArgumentParser(description='🎥 VIEWER CAMÉRA MINECRAFT')
+    parser.add_argument('camera_id', nargs='?', help='ID de la caméra à visualiser')
+    parser.add_argument('--headless', action='store_true', help='Mode sans affichage')
+    parser.add_argument('--save-frames', action='store_true', help='Sauvegarde les frames périodiquement')
+    parser.add_argument('--uri', default='ws://localhost:8765', help='URI du serveur WebSocket')
+    
+    args = parser.parse_args()
+    
     print("🎥 VIEWER CAMÉRA MINECRAFT")
     print("=" * 50)
     
-    camera_id = None
+    camera_id = args.camera_id
     
     # Récupère l'ID de la caméra
-    if len(sys.argv) > 1:
-        camera_id = sys.argv[1]
-    else:
+    if not camera_id:
         # Liste les caméras disponibles
-        cameras = await list_cameras()
+        cameras = await list_cameras(args.uri)
         
         if not cameras:
             print("\n💡 Créez d'abord une caméra avec minecraft_client.py")
@@ -228,14 +286,21 @@ async def main():
         return
     
     # Démarre le viewer
-    viewer = CameraViewer(camera_id)
+    viewer = CameraViewer(
+        camera_id, 
+        uri=args.uri, 
+        headless=args.headless, 
+        save_frames=args.save_frames
+    )
     await viewer.start()
 
 if __name__ == "__main__":
     if not (HAS_OPENCV or HAS_PIL):
-        print("❌ OpenCV ou PIL requis:")
+        print("❌ OpenCV ou PIL requis pour l'affichage:")
         print("   pip install opencv-python")
         print("   pip install pillow")
-        sys.exit(1)
+        if not HEADLESS:
+            sys.exit(1)
+        print("🖥️  Mode sans affichage disponible avec --headless")
     
     asyncio.run(main())

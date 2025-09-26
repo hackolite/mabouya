@@ -392,7 +392,7 @@ class MinecraftServer:
     
     async def camera_stream_loop(self, camera):
         """Boucle de streaming caméra"""
-        fps = 5  # Réduit à 5 FPS pour éviter la surcharge
+        fps = 2  # Réduit à 2 FPS pour éviter la surcharge
         print(f"🎬 Démarrage streaming caméra {camera.id}")
         
         try:
@@ -420,13 +420,21 @@ class MinecraftServer:
                 subscribers = list(self.camera_subscribers.get(camera.id, set()))
                 
                 if subscribers:
+                    sent_count = 0
                     for ws in subscribers:
                         try:
                             await ws.send(message)
-                            print(f"✅ Frame #{frame_count} envoyée pour {camera.id}")
+                            sent_count += 1
                         except Exception as e:
                             print(f"❌ Erreur envoi frame #{frame_count}: {e}")
                             self.camera_subscribers[camera.id].discard(ws)
+                    
+                    # Log plus modéré
+                    if frame_count == 1 or frame_count % 10 == 0:
+                        print(f"✅ Frame #{frame_count} envoyée à {sent_count} abonné(s) pour {camera.id}")
+                else:
+                    if frame_count % 30 == 0:  # Log périodique sans abonnés
+                        print(f"⏸️  Pas d'abonnés pour {camera.id} (frame #{frame_count})")
                 
                 await asyncio.sleep(1/fps)
                 
