@@ -23,6 +23,24 @@ from typing import Dict, Set
 from datetime import datetime
 import struct
 
+# Import renderers in order of preference (fastest first)
+try:
+    from ultra_fast_renderer import UltraFastRenderer
+    HAS_ULTRA_FAST_RENDERER = True
+except ImportError as e:
+    HAS_ULTRA_FAST_RENDERER = False
+    print(f"⚠️ Ultra fast camera renderer not available: {e}")
+
+try:
+    from fast_camera_renderer import FastCameraRenderer
+    HAS_FAST_RENDERER = True
+except ImportError as e:
+    HAS_FAST_RENDERER = False
+    print(f"⚠️ Fast camera renderer not available: {e}")
+
+# Pyglet renderer availability will be checked at runtime
+HAS_PYGLET_RENDERER = False
+
 class Cube:
     """Cube de base - classe centrale dont héritent tous les autres cubes"""
     def __init__(self, position, block_type="grass", texture=None, size=(1, 1, 1), 
@@ -99,6 +117,40 @@ class CubeCamera(Cube):
         self.fov = 70
         self.resolution = resolution  # Résolution par défaut 240x180 pour balance qualité/performance
         
+        # Initialize renderers in order of preference (fastest first)
+        self.ultra_fast_renderer = None
+        self.fast_renderer = None
+        self.pyglet_renderer = None
+        
+        if HAS_ULTRA_FAST_RENDERER:
+            try:
+                self.ultra_fast_renderer = UltraFastRenderer(resolution)
+                print(f"✅ Caméra {self.name} initialized with ultra-fast renderer")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize ultra-fast renderer for camera {self.name}: {e}")
+                
+        if not self.ultra_fast_renderer and HAS_FAST_RENDERER:
+            try:
+                self.fast_renderer = FastCameraRenderer(resolution)
+                print(f"✅ Caméra {self.name} initialized with fast optimized renderer")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize fast renderer for camera {self.name}: {e}")
+                
+        if not self.ultra_fast_renderer and not self.fast_renderer:
+            # Try to import Pyglet renderer at runtime
+            try:
+                from pyglet_camera_renderer import PygletCameraRenderer
+                self.pyglet_renderer = PygletCameraRenderer(resolution)
+                print(f"✅ Caméra {self.name} initialized with Pyglet renderer")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize Pyglet renderer for camera {self.name}: {e}")
+                self.pyglet_renderer = None
+        
+        if not self.ultra_fast_renderer and not self.fast_renderer and not self.pyglet_renderer:
+            print(f"⚠️ Caméra {self.name} will use fallback ray tracing renderer")
+        
+        self._world_cache_hash = None  # Cache world state to avoid rebuilding geometry every frame
+        
     def rotate(self, yaw_delta, pitch_delta):
         """Rotation de la caméra"""
         self.rotation[0] += yaw_delta
@@ -107,14 +159,140 @@ class CubeCamera(Cube):
     def move_camera(self, new_position):
         """Déplace la caméra (wrapper spécialisé)"""
         return self.move_to(new_position)
-        
-    def rotate(self, yaw_delta, pitch_delta):
-        """Rotation de la caméra"""
-        self.rotation[0] += yaw_delta
-        self.rotation[1] = max(-90, min(90, self.rotation[1] + pitch_delta))
     
     def render_view(self, world, frame_count=0):
-        """Génère une vue de la caméra en regardant réellement le monde"""
+        """Génère une vue de la caméra en regardant réellement le monde (ultra-optimisé)"""
+        width, height = self.resolution
+        
+        # Use ultra-fast renderer if available
+        if self.ultra_fast_renderer:
+            try:
+                # Check if world has changed and update renderer geometry
+                world_blocks = world.get_all_blocks()
+                world_hash = hash(frozenset((pos, block.block_type) for pos, block in world_blocks.items()))
+                
+                if world_hash != self._world_cache_hash:
+                    self.ultra_fast_renderer.update_world(world_blocks, self.position)
+                    self._world_cache_hash = world_hash
+                
+                # Render camera view with ultra-fast renderer
+                pixel_data = self.ultra_fast_renderer.render_camera_view(
+                    self.position, 
+                    self.rotation, 
+                    self.fov,
+                    frame_count
+                )
+                
+                return pixel_data
+                
+            except Exception as e:
+                print(f"⚠️ Ultra-fast renderer failed for camera {self.name}: {e}")
+                print("🔄 Falling back to fast renderer...")
+                # Fall through to try fast renderer
+        
+        # Use fast renderer if available and ultra-fast renderer failed
+        if self.fast_renderer:
+            try:
+                # Check if world has changed and update renderer geometry
+                world_blocks = world.get_all_blocks()
+                world_hash = hash(frozenset((pos, block.block_type) for pos, block in world_blocks.items()))
+                
+                if world_hash != self._world_cache_hash:
+                    self.fast_renderer.update_world(world_blocks)
+                    self._world_cache_hash = world_hash
+                
+                # Render camera view with fast renderer
+                pixel_data = self.fast_renderer.render_camera_view(
+                    self.position, 
+                    self.rotation, 
+                    self.fov,
+                    frame_count
+                )
+                
+                return pixel_data
+                
+            except Exception as e:
+                print(f"⚠️ Fast renderer failed for camera {self.name}: {e}")
+                print("🔄 Falling back to Pyglet renderer...")
+                # Fall through to try Pyglet renderer
+        
+        # Use Pyglet renderer if available and other renderers failed
+        if self.pyglet_renderer:
+            try:
+                # Check if world has changed and update renderer geometry
+                world_blocks = world.get_all_blocks()
+                world_hash = hash(frozenset((pos, block.block_type) for pos, block in world_blocks.items()))
+                
+                if world_hash != self._world_cache_hash:
+                    self.pyglet_renderer.update_world(world_blocks)
+                    self._world_cache_hash = world_hash
+                
+                # Render camera view with Pyglet
+                pixel_data = self.pyglet_renderer.render_camera_view(
+                    self.position, 
+                    self.rotation, 
+                    self.fov
+                )
+                
+                # Add visual indicators (LED and frame counter) to pixel data
+                pixel_array = bytearray(pixel_data)
+                self._add_visual_indicators(pixel_array, width, height, frame_count)
+                
+                return bytes(pixel_array)
+                
+            except Exception as e:
+                print(f"⚠️ Pyglet renderer failed for camera {self.name}: {e}")
+                print("🔄 Falling back to ray tracing...")
+                # Fall through to ray tracing backup
+        
+        # Fallback: Original ray tracing implementation
+        return self._render_view_raytracing(world, frame_count)
+    
+    def _add_visual_indicators(self, pixel_array, width, height, frame_count):
+        """Add LED indicator and frame counter to rendered image"""
+        for py in range(height):
+            for px in range(width):
+                pixel_offset = (py * width + px) * 3
+                
+                # LED indicator in top-right corner
+                if px >= width - 10 and py <= 8:
+                    led_on = (frame_count // 3) % 2 == 0
+                    if px >= width - 8 and py <= 6:
+                        if led_on:
+                            pixel_array[pixel_offset:pixel_offset+3] = [0, 255, 0]  # Green
+                        else:
+                            pixel_array[pixel_offset:pixel_offset+3] = [0, 120, 0]  # Dark green
+                    elif px >= width - 10 and py <= 8:
+                        if led_on:
+                            pixel_array[pixel_offset:pixel_offset+3] = [0, 200, 0]  # Medium green
+                        else:
+                            pixel_array[pixel_offset:pixel_offset+3] = [0, 80, 0]   # Very dark green
+                
+                # Frame counter in bottom-right corner
+                if px >= width - 15 and py >= height - 10:
+                    digit = frame_count % 10
+                    rel_x = px - (width - 15)
+                    rel_y = py - (height - 10)
+                    
+                    digit_patterns = {
+                        0: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
+                        1: [[0,0,1,0,0], [0,1,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [1,1,1,1,1]],
+                        2: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1]],
+                        3: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
+                        4: [[1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
+                        5: [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
+                        6: [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
+                        7: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
+                        8: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
+                        9: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]]
+                    }
+                    
+                    if rel_x < 5 and rel_y < 8 and digit in digit_patterns:
+                        if digit_patterns[digit][rel_y][rel_x]:
+                            pixel_array[pixel_offset:pixel_offset+3] = [255, 255, 0]  # Yellow counter
+    
+    def _render_view_raytracing(self, world, frame_count=0):
+        """Fallback ray tracing implementation (original method)"""
         width, height = self.resolution
         pixels = []
         
