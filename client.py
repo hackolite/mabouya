@@ -393,12 +393,12 @@ class MinecraftWindow(pyglet.window.Window):
                 del self.shown[position]
     
     def _add_camera_visual(self, camera):
-        """Ajoute un cube jaune pour visualiser la caméra"""
+        """Ajoute un cube magenta pour visualiser la caméra"""
         cam_id = camera["id"]
         x, y, z = camera["position"]
         
         vertices = cube_vertices(x, y, z, 0.6)
-        color = (255, 255, 0) * 24  # Jaune
+        color = (255, 0, 255) * 24  # Magenta vif pour plus de visibilité
         
         # Ajoute le cube de caméra
         self._camera_cubes[cam_id] = self.camera_batch.add(
@@ -825,7 +825,12 @@ class MinecraftWindow(pyglet.window.Window):
         
         # Dessine les cubes solides
         self.batch.draw()
+        
+        # Disable culling temporarily for camera rendering
+        glDisable(GL_CULL_FACE)
         self.camera_batch.draw()
+        glEnable(GL_CULL_FACE)
+        
         self.player_batch.draw()
         self.other_players_batch.draw()  # Dessine les autres joueurs
         
