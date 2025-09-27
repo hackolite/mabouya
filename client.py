@@ -16,6 +16,7 @@ Contrôles:
 - Clic droit : Placer bloc
 - C : Créer caméra à la position actuelle
 - L : Lister les caméras
+- Ctrl+W : Basculer wireframes (améliore performance)
 - ESC : Libérer souris
 
 Nécessite: pyglet, websockets
@@ -199,6 +200,10 @@ class MinecraftWindow(pyglet.window.Window):
         self.strafe = [0, 0]
         self.dy = 0
         
+        # Performance settings
+        self.show_wireframes = True  # Toggle wireframes for performance
+        self.wireframe_distance = 15  # Only show wireframes within this distance
+        
         # Monde
         self.world = {}
         self.shown = {}
@@ -320,16 +325,22 @@ class MinecraftWindow(pyglet.window.Window):
             ('c3B/static', color)
         )
         
-        # Ajoute le wireframe noir épais
-        edges = cube_edges(x, y, z, 0.5)
-        edge_count = len(edges) // 3  # 3 coordonnées par vertex
-        black_color = (0, 0, 0) * edge_count  # Noir pour toutes les arêtes
-        
-        self._wireframes[position] = self.wireframe_batch.add(
-            edge_count, GL_LINES, None,
-            ('v3f/static', edges),
-            ('c3B/static', black_color)
-        )
+        # Ajoute le wireframe seulement si les wireframes sont activés
+        # et si le bloc est proche du joueur pour de meilleures performances
+        if self.show_wireframes:
+            player_x, player_y, player_z = self.position
+            distance = math.sqrt((x - player_x)**2 + (y - player_y)**2 + (z - player_z)**2)
+            
+            if distance <= self.wireframe_distance:
+                edges = cube_edges(x, y, z, 0.5)
+                edge_count = len(edges) // 3  # 3 coordonnées par vertex
+                black_color = (0, 0, 0) * edge_count  # Noir pour toutes les arêtes
+                
+                self._wireframes[position] = self.wireframe_batch.add(
+                    edge_count, GL_LINES, None,
+                    ('v3f/static', edges),
+                    ('c3B/static', black_color)
+                )
         
         self.shown[position] = block_type
     
@@ -355,7 +366,7 @@ class MinecraftWindow(pyglet.window.Window):
             if position in self._shown:
                 self._shown[position].delete()
                 del self._shown[position]
-            if position in self._wireframes:
+            if position in self._wireframes and self._wireframes[position]:
                 self._wireframes[position].delete()
                 del self._wireframes[position]
             if position in self.shown:
@@ -376,16 +387,17 @@ class MinecraftWindow(pyglet.window.Window):
             ('c3B/static', color)
         )
         
-        # Ajoute le wireframe noir épais
-        edges = cube_edges(x, y, z, 0.6)
-        edge_count = len(edges) // 3
-        black_color = (0, 0, 0) * edge_count
-        
-        self._camera_wireframes[cam_id] = self.wireframe_batch.add(
-            edge_count, GL_LINES, None,
-            ('v3f/static', edges),
-            ('c3B/static', black_color)
-        )
+        # Ajoute le wireframe seulement si activé
+        if self.show_wireframes:
+            edges = cube_edges(x, y, z, 0.6)
+            edge_count = len(edges) // 3
+            black_color = (0, 0, 0) * edge_count
+            
+            self._camera_wireframes[cam_id] = self.wireframe_batch.add(
+                edge_count, GL_LINES, None,
+                ('v3f/static', edges),
+                ('c3B/static', black_color)
+            )
     
     def _update_player_cube(self):
         """Met à jour ou crée le cube du joueur"""
@@ -408,16 +420,17 @@ class MinecraftWindow(pyglet.window.Window):
             ('c3B/static', color)
         )
         
-        # Ajoute le wireframe noir épais
-        edges = cube_edges(x, y - 1, z, 0.4)
-        edge_count = len(edges) // 3
-        black_color = (0, 0, 0) * edge_count
-        
-        self.player_wireframe = self.wireframe_batch.add(
-            edge_count, GL_LINES, None,
-            ('v3f/static', edges),
-            ('c3B/static', black_color)
-        )
+        # Ajoute le wireframe seulement si activé
+        if self.show_wireframes:
+            edges = cube_edges(x, y - 1, z, 0.4)
+            edge_count = len(edges) // 3
+            black_color = (0, 0, 0) * edge_count
+            
+            self.player_wireframe = self.wireframe_batch.add(
+                edge_count, GL_LINES, None,
+                ('v3f/static', edges),
+                ('c3B/static', black_color)
+            )
     
     def on_camera_created(self, camera):
         """Callback caméra créée"""
@@ -437,16 +450,18 @@ class MinecraftWindow(pyglet.window.Window):
             ('c3B/static', color)
         )
         
-        # Ajoute le wireframe noir épais
-        edges = cube_edges(x, y - 1, z, 0.4)
-        edge_count = len(edges) // 3
-        black_color = (0, 0, 0) * edge_count
-        
-        wireframe = self.wireframe_batch.add(
-            edge_count, GL_LINES, None,
-            ('v3f/static', edges),
-            ('c3B/static', black_color)
-        )
+        # Ajoute le wireframe seulement si activé
+        wireframe = None
+        if self.show_wireframes:
+            edges = cube_edges(x, y - 1, z, 0.4)
+            edge_count = len(edges) // 3
+            black_color = (0, 0, 0) * edge_count
+            
+            wireframe = self.wireframe_batch.add(
+                edge_count, GL_LINES, None,
+                ('v3f/static', edges),
+                ('c3B/static', black_color)
+            )
         
         self.other_players[player_id] = {"position": position, "cube": cube, "wireframe": wireframe}
         print(f"👤 Joueur {player_id} ajouté à {position}")
@@ -479,16 +494,18 @@ class MinecraftWindow(pyglet.window.Window):
                 ('c3B/static', color)
             )
             
-            # Ajoute le nouveau wireframe
-            edges = cube_edges(x, y - 1, z, 0.4)
-            edge_count = len(edges) // 3
-            black_color = (0, 0, 0) * edge_count
-            
-            wireframe = self.wireframe_batch.add(
-                edge_count, GL_LINES, None,
-                ('v3f/static', edges),
-                ('c3B/static', black_color)
-            )
+            # Ajoute le nouveau wireframe seulement si activé
+            wireframe = None
+            if self.show_wireframes:
+                edges = cube_edges(x, y - 1, z, 0.4)
+                edge_count = len(edges) // 3
+                black_color = (0, 0, 0) * edge_count
+                
+                wireframe = self.wireframe_batch.add(
+                    edge_count, GL_LINES, None,
+                    ('v3f/static', edges),
+                    ('c3B/static', black_color)
+                )
             
             self.other_players[player_id] = {"position": new_position, "cube": cube, "wireframe": wireframe}
     
@@ -496,6 +513,37 @@ class MinecraftWindow(pyglet.window.Window):
         """Affiche un message temporaire"""
         self.info_label.text = text
         pyglet.clock.schedule_once(lambda dt: setattr(self.info_label, 'text', ''), duration)
+    
+    def toggle_wireframes(self):
+        """Active/désactive les wireframes pour améliorer les performances"""
+        self.show_wireframes = not self.show_wireframes
+        status = "activés" if self.show_wireframes else "désactivés"
+        self.show_message(f"Wireframes {status} (Ctrl+W pour basculer)")
+        
+        # Si on désactive les wireframes, on supprime tous les wireframes existants
+        if not self.show_wireframes:
+            # Supprime les wireframes des blocs
+            for wireframe in self._wireframes.values():
+                if wireframe:
+                    wireframe.delete()
+            self._wireframes.clear()
+            
+            # Supprime les wireframes des caméras
+            for wireframe in self._camera_wireframes.values():
+                if wireframe:
+                    wireframe.delete()
+            self._camera_wireframes.clear()
+            
+            # Supprime le wireframe du joueur
+            if self.player_wireframe:
+                self.player_wireframe.delete()
+                self.player_wireframe = None
+            
+            # Supprime les wireframes des autres joueurs
+            for player_data in self.other_players.values():
+                if player_data.get("wireframe"):
+                    player_data["wireframe"].delete()
+                    player_data["wireframe"] = None
     
     def create_camera_at_position(self):
         """Crée une caméra à la position du joueur"""
@@ -641,7 +689,8 @@ class MinecraftWindow(pyglet.window.Window):
         
         # Mise à jour labels
         x, y, z = self.position
-        self.label.text = f'Position: ({x:.1f}, {y:.1f}, {z:.1f})\nCaméras: {len(self.cameras)} | Joueurs: {len(self.other_players)}\nC: Créer caméra | L: Lister'
+        wireframe_status = "ON" if self.show_wireframes else "OFF"
+        self.label.text = f'Position: ({x:.1f}, {y:.1f}, {z:.1f})\nCaméras: {len(self.cameras)} | Joueurs: {len(self.other_players)} | Wireframes: {wireframe_status}\nC: Créer caméra | L: Lister | Ctrl+W: Toggle wireframes'
     
     def on_mouse_press(self, x, y, button, modifiers):
         """Gestion souris"""
@@ -688,6 +737,9 @@ class MinecraftWindow(pyglet.window.Window):
         elif symbol == key.L:
             # Lister caméras
             self.list_cameras()
+        elif symbol == key.W and modifiers & key.MOD_CTRL:
+            # Toggle wireframes avec Ctrl+W
+            self.toggle_wireframes()
     
     def on_key_release(self, symbol, modifiers):
         """Touches relâchées"""
@@ -757,11 +809,12 @@ class MinecraftWindow(pyglet.window.Window):
         self.player_batch.draw()
         self.other_players_batch.draw()  # Dessine les autres joueurs
         
-        # Dessine les wireframes avec des lignes épaisses noires
-        glLineWidth(2.0)  # Lignes épaisses
-        glColor3d(0, 0, 0)  # Noir
-        self.wireframe_batch.draw()
-        glLineWidth(1.0)  # Restore default line width
+        # Dessine les wireframes seulement s'ils sont activés
+        if self.show_wireframes:
+            glLineWidth(2.0)  # Lignes épaisses
+            glColor3d(0, 0, 0)  # Noir
+            self.wireframe_batch.draw()
+            glLineWidth(1.0)  # Restore default line width
         
         # 2D
         self.set_2d()
