@@ -398,9 +398,6 @@ async def list_cameras(uri="ws://localhost:8765"):
                 await websocket.close()
             except:
                 pass
-            return []
-    
-    return []
 
 async def main():
     """Point d'entrée principal"""
