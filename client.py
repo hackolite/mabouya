@@ -107,6 +107,19 @@ class NetworkClient:
                         lambda dt, c=camera: self.window.on_camera_created(c),
                         0
                     )
+                elif data["type"] == "block_placed":
+                    position = tuple(data["position"])
+                    block_type = data["block_type"]
+                    pyglet.clock.schedule_once(
+                        lambda dt, pos=position, bt=block_type: self.window._add_block_local(pos, bt),
+                        0
+                    )
+                elif data["type"] == "block_destroyed":
+                    position = tuple(data["position"])
+                    pyglet.clock.schedule_once(
+                        lambda dt, pos=position: self.window._remove_block_local(pos),
+                        0
+                    )
         except Exception as e:
             print(f"Erreur réseau: {e}")
             self.connected = False
@@ -179,7 +192,7 @@ class MinecraftWindow(pyglet.window.Window):
         
         for pos_str, block_type in world_data["blocks"].items():
             x, y, z = map(int, pos_str.split(','))
-            self.add_block((x, y, z), block_type)
+            self._add_block_local((x, y, z), block_type)
         
         # Charge les caméras existantes
         for cam_id, cam_data in world_data.get("cameras", {}).items():
@@ -187,10 +200,26 @@ class MinecraftWindow(pyglet.window.Window):
             self._add_camera_visual(cam_data)
     
     def add_block(self, position, block_type):
-        """Ajoute un bloc"""
+        """Ajoute un bloc localement et envoie au serveur"""
         if position in self.world:
             return
         
+        # Envoie la commande au serveur
+        if hasattr(self, 'network') and self.network.connected:
+            self.network.send_message({
+                "type": "place_block",
+                "position": list(position),
+                "block_type": block_type
+            })
+        
+        # Mise à jour locale pour un retour visuel immédiat
+        self._add_block_local(position, block_type)
+    
+    def _add_block_local(self, position, block_type):
+        """Ajoute un bloc localement seulement (pour rendu)"""
+        if position in self.world:
+            return
+            
         self.world[position] = block_type
         
         # Rendu simple (tous en vert pour la démo)
@@ -213,7 +242,22 @@ class MinecraftWindow(pyglet.window.Window):
         self.shown[position] = block_type
     
     def remove_block(self, position):
-        """Retire un bloc"""
+        """Retire un bloc localement et envoie au serveur"""
+        if position not in self.world:
+            return
+            
+        # Envoie la commande au serveur
+        if hasattr(self, 'network') and self.network.connected:
+            self.network.send_message({
+                "type": "destroy_block", 
+                "position": list(position)
+            })
+        
+        # Mise à jour locale pour un retour visuel immédiat
+        self._remove_block_local(position)
+    
+    def _remove_block_local(self, position):
+        """Retire un bloc localement seulement (pour rendu)"""
         if position in self.world:
             del self.world[position]
             if position in self._shown:
