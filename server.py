@@ -1195,7 +1195,7 @@ class MinecraftServer:
     
     async def camera_stream_loop(self, camera):
         """Boucle de streaming caméra"""
-        fps = 2  # Réduit de 3 à 2 FPS pour améliorer les performances CPU
+        fps = 24  # Increased to 24 FPS for ultra-fast, robust real-time rendering
         frame_interval = 1.0 / fps  # Temps entre les frames
         print(f"🎬 Démarrage streaming caméra {camera.id} à {fps} FPS")
         
