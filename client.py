@@ -92,8 +92,9 @@ class NetworkClient:
             data = json.loads(message)
             
             if data["type"] == "world_state":
+                world_data = data["world"]  # Capture by value
                 pyglet.clock.schedule_once(
-                    lambda dt: self.window.load_world(data["world"]), 
+                    lambda dt, wd=world_data: self.window.load_world(wd), 
                     0
                 )
             
