@@ -37,7 +37,7 @@ class CubeCamera:
         self.name = name
         self.rotation = [0, 0]  # yaw, pitch
         self.fov = 70
-        self.resolution = (320, 240)
+        self.resolution = (160, 120)  # Réduit de 320x240 à 160x120 pour améliorer performance
         
     def rotate(self, yaw_delta, pitch_delta):
         """Rotation de la caméra"""
@@ -101,9 +101,9 @@ class CubeCamera:
         
         return bytes(pixels)
     
-    def _ray_march(self, ox, oy, oz, dx, dy, dz, world, max_dist=50):
-        """Lance un rayon et retourne la couleur du premier bloc touché"""
-        step = 0.1
+    def _ray_march(self, ox, oy, oz, dx, dy, dz, world, max_dist=25):
+        """Lance un rayon et retourne la couleur du premier bloc touché (optimisé)"""
+        step = 0.5  # Augmenté de 0.1 à 0.5 pour 5x moins d'itérations
         
         for i in range(int(max_dist / step)):
             # Position actuelle sur le rayon
