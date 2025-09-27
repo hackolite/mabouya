@@ -40,7 +40,8 @@ except ImportError:
 HEADLESS = os.environ.get('DISPLAY') is None or os.environ.get('HEADLESS') == '1'
 
 class CameraViewer:
-    def __init__(self, camera_id, uri="ws://localhost:8765", headless=False, save_frames=False):
+    def __init__(self, camera_id, uri="ws://localhost:8765", headless=False, save_frames=False, 
+                 window_size=(800, 600), fullscreen=False):
         self.camera_id = camera_id
         self.uri = uri
         self.websocket = None
@@ -49,6 +50,8 @@ class CameraViewer:
         self.headless = headless or HEADLESS
         self.save_frames = save_frames
         self.use_opencv = HAS_OPENCV and not self.headless
+        self.window_size = window_size  # Taille de fenêtre d'affichage
+        self.fullscreen = fullscreen  # Mode plein écran
         
         if self.headless:
             print("🖥️  Mode sans affichage activé")
@@ -76,7 +79,11 @@ class CameraViewer:
             if self.headless:
                 print("Mode sans affichage - Appuyez sur Ctrl+C pour quitter")
             else:
-                print("Appuyez sur 'q' pour quitter, 's' pour sauvegarder une frame")
+                print("Contrôles:")
+                print("  'q' - Quitter")
+                print("  's' - Sauvegarder la frame actuelle")
+                print("  'f' - Basculer plein écran/fenêtré")
+                print("  'r' - Réinitialiser la taille de fenêtre")
             self.running = True
         else:
             error_msg = data.get('message', "Impossible de s'abonner")
@@ -96,11 +103,60 @@ class CameraViewer:
         
         return frame_array
     
+    def scale_frame_for_display(self, frame):
+        """Redimensionne l'image pour un meilleur affichage si nécessaire"""
+        height, width = frame.shape[:2]
+        
+        # Si l'image est très petite, on l'agrandit avec une interpolation lisse
+        if width < 400 or height < 300:
+            # Calcule un facteur d'échelle pour avoir au moins 400x300
+            scale_x = max(1, 400 // width)
+            scale_y = max(1, 300 // height)
+            scale = min(scale_x, scale_y)
+            
+            new_width = width * scale
+            new_height = height * scale
+            
+            # Utilise l'interpolation cubique pour un rendu plus lisse
+            return cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+        
+        return frame
+    
+    def toggle_fullscreen(self):
+        """Bascule entre mode fenêtré et plein écran"""
+        if not self.use_opencv:
+            return
+            
+        try:
+            self.fullscreen = not self.fullscreen
+            if self.fullscreen:
+                cv2.setWindowProperty(f"Camera {self.camera_id}", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                print("📺 Mode plein écran activé")
+            else:
+                cv2.setWindowProperty(f"Camera {self.camera_id}", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(f"Camera {self.camera_id}", self.window_size[0], self.window_size[1])
+                print("🖼️  Mode fenêtré activé")
+        except Exception as e:
+            print(f"⚠️  Erreur lors du basculement plein écran: {e}")
+    
     async def stream_loop(self):
         """Boucle de réception et affichage"""
         if self.use_opencv:
             try:
+                # Crée une fenêtre redimensionnable avec une taille par défaut plus grande
                 cv2.namedWindow(f"Camera {self.camera_id}", cv2.WINDOW_NORMAL)
+                
+                # Définit la taille initiale de la fenêtre
+                cv2.resizeWindow(f"Camera {self.camera_id}", self.window_size[0], self.window_size[1])
+                
+                # Mode plein écran si demandé
+                if self.fullscreen:
+                    cv2.setWindowProperty(f"Camera {self.camera_id}", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                
+                print(f"🖼️  Fenêtre d'affichage créée: {self.window_size[0]}x{self.window_size[1]}")
+                if self.fullscreen:
+                    print("📺 Mode plein écran activé")
+                    
             except Exception as e:
                 print(f"⚠️  Impossible d'ouvrir la fenêtre d'affichage: {e}")
                 print("🖥️  Basculement en mode sans affichage")
@@ -169,8 +225,9 @@ class CameraViewer:
                                 1
                             )
                             
-                            # Affiche
-                            cv2.imshow(f"Camera {self.camera_id}", frame_bgr)
+                            # Affiche avec une mise à l'échelle adaptative
+                            display_frame = self.scale_frame_for_display(frame_bgr)
+                            cv2.imshow(f"Camera {self.camera_id}", display_frame)
                             
                             # Gestion des touches
                             key = cv2.waitKey(1) & 0xFF
@@ -180,6 +237,11 @@ class CameraViewer:
                                 filename = f"camera_{self.camera_id}_{self.frame_count}.jpg"
                                 cv2.imwrite(filename, frame_bgr)
                                 print(f"💾 Frame sauvegardée: {filename}")
+                            elif key == ord('f'):  # Basculer plein écran
+                                self.toggle_fullscreen()
+                            elif key == ord('r'):  # Réinitialiser la taille de fenêtre
+                                cv2.resizeWindow(f"Camera {self.camera_id}", self.window_size[0], self.window_size[1])
+                                print(f"🖼️  Taille de fenêtre réinitialisée: {self.window_size[0]}x{self.window_size[1]}")
                         
                         else:
                             # Affichage PIL (moins interactif)
@@ -258,11 +320,21 @@ async def main():
     parser.add_argument('--headless', action='store_true', help='Mode sans affichage')
     parser.add_argument('--save-frames', action='store_true', help='Sauvegarde les frames périodiquement')
     parser.add_argument('--uri', default='ws://localhost:8765', help='URI du serveur WebSocket')
+    parser.add_argument('--window-size', default='800x600', help='Taille de la fenêtre d\'affichage (ex: 1024x768)')
+    parser.add_argument('--fullscreen', action='store_true', help='Démarre en mode plein écran')
     
     args = parser.parse_args()
     
     print("🎥 VIEWER CAMÉRA MINECRAFT")
     print("=" * 50)
+    
+    # Parse window size
+    try:
+        window_width, window_height = map(int, args.window_size.split('x'))
+        window_size = (window_width, window_height)
+    except ValueError:
+        print(f"⚠️  Taille de fenêtre invalide: {args.window_size}, utilisation de 800x600")
+        window_size = (800, 600)
     
     camera_id = args.camera_id
     
@@ -292,7 +364,9 @@ async def main():
         camera_id, 
         uri=args.uri, 
         headless=args.headless, 
-        save_frames=args.save_frames
+        save_frames=args.save_frames,
+        window_size=window_size,
+        fullscreen=args.fullscreen
     )
     await viewer.start()
 

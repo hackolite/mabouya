@@ -43,13 +43,13 @@ class Player(Cube):
 
 class CubeCamera:
     """Cube avec caméra intégrée"""
-    def __init__(self, position, name="Camera"):
+    def __init__(self, position, name="Camera", resolution=(640, 480)):
         self.id = f"cam_{datetime.now().timestamp()}"
         self.position = list(position)
         self.name = name
         self.rotation = [0, 0]  # yaw, pitch
         self.fov = 70
-        self.resolution = (160, 120)  # Réduit de 320x240 à 160x120 pour améliorer performance
+        self.resolution = resolution  # Résolution configurable, par défaut 640x480 pour meilleur rendu
         
     def rotate(self, yaw_delta, pitch_delta):
         """Rotation de la caméra"""
@@ -230,9 +230,9 @@ class World:
         
         print(f"Monde généré: {len(self.blocks)} blocs")
     
-    def add_camera(self, position, name):
+    def add_camera(self, position, name, resolution=(640, 480)):
         """Ajoute une caméra au monde"""
-        camera = CubeCamera(position, name)
+        camera = CubeCamera(position, name, resolution)
         self.cameras[camera.id] = camera
         return camera
     
@@ -398,8 +398,19 @@ class MinecraftServer:
         """Crée une caméra"""
         position = data.get("position", [0, 2, 0])
         name = data.get("name", "Camera")
+        resolution = data.get("resolution", (640, 480))  # Résolution configurable
         
-        camera = self.world.add_camera(position, name)
+        # Valide la résolution (limites raisonnables)
+        if isinstance(resolution, list) and len(resolution) == 2:
+            width, height = resolution
+            # Limite les résolutions pour éviter les problèmes de performance
+            width = max(160, min(1920, width))
+            height = max(120, min(1080, height))
+            resolution = (width, height)
+        else:
+            resolution = (640, 480)  # Valeur par défaut si invalide
+        
+        camera = self.world.add_camera(position, name, resolution)
         
         # Initialise les abonnés
         self.camera_subscribers[camera.id] = set()
