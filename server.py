@@ -414,7 +414,14 @@ class MinecraftServer:
         """Abonne un client au stream caméra"""
         camera_id = data.get("camera_id")
         
-        if camera_id in self.camera_subscribers:
+        # Vérifie si la caméra existe dans le monde
+        if camera_id in self.world.cameras:
+            # Initialise les abonnés si pas encore fait
+            if camera_id not in self.camera_subscribers:
+                self.camera_subscribers[camera_id] = set()
+                # Démarre le stream si pas encore actif
+                asyncio.create_task(self.camera_stream_loop(self.world.cameras[camera_id]))
+            
             self.camera_subscribers[camera_id].add(websocket)
             await websocket.send(json.dumps({
                 "type": "subscribed",
