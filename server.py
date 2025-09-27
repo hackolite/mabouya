@@ -43,13 +43,13 @@ class Player(Cube):
 
 class CubeCamera:
     """Cube avec caméra intégrée"""
-    def __init__(self, position, name="Camera"):
+    def __init__(self, position, name="Camera", resolution=(320, 240)):
         self.id = f"cam_{datetime.now().timestamp()}"
         self.position = list(position)
         self.name = name
         self.rotation = [0, 0]  # yaw, pitch
         self.fov = 70
-        self.resolution = (160, 120)  # Réduit de 320x240 à 160x120 pour améliorer performance
+        self.resolution = resolution  # Résolution par défaut 320x240 pour balance qualité/performance
         
     def rotate(self, yaw_delta, pitch_delta):
         """Rotation de la caméra"""
@@ -230,9 +230,9 @@ class World:
         
         print(f"Monde généré: {len(self.blocks)} blocs")
     
-    def add_camera(self, position, name):
+    def add_camera(self, position, name, resolution=(320, 240)):
         """Ajoute une caméra au monde"""
-        camera = CubeCamera(position, name)
+        camera = CubeCamera(position, name, resolution)
         self.cameras[camera.id] = camera
         return camera
     
@@ -398,8 +398,19 @@ class MinecraftServer:
         """Crée une caméra"""
         position = data.get("position", [0, 2, 0])
         name = data.get("name", "Camera")
+        resolution = data.get("resolution", (320, 240))  # Résolution par défaut pour performance
         
-        camera = self.world.add_camera(position, name)
+        # Valide la résolution (limites raisonnables)
+        if isinstance(resolution, list) and len(resolution) == 2:
+            width, height = resolution
+            # Limite les résolutions pour éviter les problèmes de performance
+            width = max(160, min(1920, width))
+            height = max(120, min(1080, height))
+            resolution = (width, height)
+        else:
+            resolution = (640, 480)  # Valeur par défaut si invalide
+        
+        camera = self.world.add_camera(position, name, resolution)
         
         # Initialise les abonnés
         self.camera_subscribers[camera.id] = set()
@@ -579,7 +590,7 @@ class MinecraftServer:
     
     async def camera_stream_loop(self, camera):
         """Boucle de streaming caméra"""
-        fps = 2  # Réduit à 2 FPS pour éviter la surcharge
+        fps = 5  # Augmenté à 5 FPS pour une meilleure fluidité avec résolution 320x240
         print(f"🎬 Démarrage streaming caméra {camera.id}")
         
         try:
@@ -590,8 +601,11 @@ class MinecraftServer:
                 # Rendu de la vue caméra
                 frame_data = camera.render_view(self.world, frame_count)
                 
+                # Compresse l'image en JPEG pour réduire la taille
+                compressed_frame = self.compress_frame_jpeg(frame_data, camera.resolution)
+                
                 # Encode en base64
-                frame_b64 = base64.b64encode(frame_data).decode('utf-8')
+                frame_b64 = base64.b64encode(compressed_frame).decode('utf-8')
                 
                 # Message de frame
                 message = json.dumps({
@@ -600,6 +614,7 @@ class MinecraftServer:
                     "width": camera.resolution[0],
                     "height": camera.resolution[1],
                     "frame": frame_b64,
+                    "format": "jpeg",  # Indique le format de compression
                     "timestamp": datetime.now().isoformat()
                 })
                 
@@ -631,6 +646,46 @@ class MinecraftServer:
             traceback.print_exc()
         
         print(f"🛑 Arrêt streaming caméra {camera.id}")
+    
+    def compress_frame_jpeg(self, frame_data, resolution, quality=75):
+        """Compresse une frame en JPEG pour réduire la taille du message"""
+        try:
+            from PIL import Image
+            import io
+            
+            width, height = resolution
+            
+            # Convertit les bytes en array numpy puis en image PIL
+            import numpy as np
+            frame_array = np.frombuffer(frame_data, dtype=np.uint8)
+            frame_array = frame_array.reshape((height, width, 3))
+            
+            # Crée une image PIL
+            img = Image.fromarray(frame_array, 'RGB')
+            
+            # Compresse en JPEG
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG', quality=quality, optimize=True)
+            
+            compressed_data = buffer.getvalue()
+            buffer.close()
+            
+            # Log de compression (seulement pour la première frame)
+            if len(compressed_data) < len(frame_data) * 0.8:  # Si compression > 20%
+                compression_ratio = len(compressed_data) / len(frame_data)
+                if hasattr(self, '_compression_logged') == False:
+                    print(f"📦 Compression JPEG: {len(frame_data)} -> {len(compressed_data)} bytes (ratio: {compression_ratio:.2f})")
+                    self._compression_logged = True
+            
+            return compressed_data
+            
+        except ImportError:
+            # Si PIL n'est pas disponible, retourne les données brutes
+            print("⚠️  PIL non disponible pour la compression JPEG")
+            return frame_data
+        except Exception as e:
+            print(f"⚠️  Erreur compression JPEG: {e}")
+            return frame_data
 
 if __name__ == "__main__":
     server = MinecraftServer()
