@@ -58,8 +58,9 @@ class CameraViewer:
         self.websocket = await websockets.connect(self.uri)
         print(f"Connecté à {self.uri}")
         
-        # Ignore le message world_state initial
-        await self.websocket.recv()
+        # Ignore les messages initiaux (world_state et player_joined)
+        await self.websocket.recv()  # world_state
+        await self.websocket.recv()  # player_joined
         
         # S'abonne à la caméra
         await self.websocket.send(json.dumps({
@@ -223,8 +224,9 @@ async def list_cameras(uri="ws://localhost:8765"):
     """Liste les caméras disponibles"""
     websocket = await websockets.connect(uri)
     
-    # Ignore le message initial
-    await websocket.recv()
+    # Ignore les messages initiaux (world_state et player_joined)
+    await websocket.recv()  # world_state
+    await websocket.recv()  # player_joined
     
     # Demande la liste
     await websocket.send(json.dumps({"type": "get_cameras"}))
