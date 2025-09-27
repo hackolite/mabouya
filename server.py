@@ -26,14 +26,14 @@ import struct
 # Import renderers in order of preference (fastest first)
 try:
     from ultra_fast_renderer import UltraFastRenderer
-    HAS_ULTRA_FAST_RENDERER = True
+    HAS_ULTRA_FAST_RENDERER = False
 except ImportError as e:
     HAS_ULTRA_FAST_RENDERER = False
     print(f"⚠️ Ultra fast camera renderer not available: {e}")
 
 try:
     from fast_camera_renderer import FastCameraRenderer
-    HAS_FAST_RENDERER = True
+    HAS_FAST_RENDERER = False
 except ImportError as e:
     HAS_FAST_RENDERER = False
     print(f"⚠️ Fast camera renderer not available: {e}")
