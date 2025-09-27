@@ -47,59 +47,96 @@ class UltraFastRenderer:
         print(f"UltraFastRenderer: Using {len(self.nearby_blocks)} blocks")
     
     def render_camera_view(self, camera_position, camera_rotation, fov=70, frame_count=0):
-        """Ultra-fast camera rendering using simplified depth estimation"""
+        """Ultra-fast camera rendering with improved precision and robustness"""
         cx, cy, cz = camera_position
         yaw, pitch = camera_rotation
         
         # Clear buffer with sky color
         self.pixel_buffer[:] = self.sky_color
         
-        # Simple horizon line based on pitch
-        horizon_y = int(self.height * (0.5 + pitch / 180.0))
+        # Improved horizon calculation with proper pitch mapping
+        # Pitch ranges from -90 (looking up) to +90 (looking down)
+        pitch_normalized = max(-90, min(90, pitch))  # Clamp pitch
+        horizon_y = int(self.height * (0.5 + pitch_normalized / 180.0))
         horizon_y = max(0, min(self.height - 1, horizon_y))
         
         # Ground color below horizon
         if horizon_y < self.height:
             self.pixel_buffer[horizon_y:, :] = self.ground_color
         
-        # Project nearby blocks as simple rectangles
+        # Precise trigonometric calculations
         yaw_rad = math.radians(yaw)
+        pitch_rad = math.radians(pitch_normalized)
         cos_yaw = math.cos(yaw_rad)
         sin_yaw = math.sin(yaw_rad)
+        cos_pitch = math.cos(pitch_rad)
+        sin_pitch = math.sin(pitch_rad)
         
+        # FOV calculations for proper perspective
+        fov_rad = math.radians(fov)
+        tan_half_fov = math.tan(fov_rad / 2)
+        aspect_ratio = self.width / self.height
+        
+        # Sort blocks by distance for proper depth ordering
+        visible_blocks = []
         for dist_sq, position, block in self.nearby_blocks:
             bx, by, bz = position
             
             # Transform block position relative to camera
             rel_x = bx - cx
+            rel_y = by - cy  
             rel_z = bz - cz
-            rel_y = by - cy
             
-            # Rotate by camera yaw
-            rot_x = rel_x * cos_yaw + rel_z * sin_yaw
-            rot_z = -rel_x * sin_yaw + rel_z * cos_yaw
+            # Apply camera rotation transformations
+            # First rotate around Y-axis (yaw)
+            rot_x = rel_x * cos_yaw - rel_z * sin_yaw
+            rot_z = rel_x * sin_yaw + rel_z * cos_yaw
             
-            # Skip blocks behind camera
-            if rot_z <= 0:
+            # Then rotate around X-axis (pitch) 
+            rot_y = rel_y * cos_pitch + rot_z * sin_pitch
+            final_z = -rel_y * sin_pitch + rot_z * cos_pitch
+            
+            # Skip blocks behind camera (with small epsilon for precision)
+            if final_z <= 0.1:
                 continue
             
-            # Simple perspective projection
-            screen_x = int(self.width * 0.5 + rot_x * 100 / rot_z)
-            screen_y = int(self.height * 0.5 - rel_y * 100 / rot_z)
+            # Precise perspective projection with proper FOV
+            screen_x = (rot_x / final_z) / (tan_half_fov * aspect_ratio)
+            screen_y = -(rot_y / final_z) / tan_half_fov
             
-            # Simple block size based on distance
-            block_size = max(1, int(50 / math.sqrt(dist_sq + 1)))
+            # Convert to pixel coordinates
+            pixel_x = int((screen_x + 1) * 0.5 * self.width)
+            pixel_y = int((screen_y + 1) * 0.5 * self.height)
             
-            # Draw block as rectangle
+            # Skip blocks outside screen bounds
+            if pixel_x < -50 or pixel_x >= self.width + 50 or pixel_y < -50 or pixel_y >= self.height + 50:
+                continue
+                
+            # Calculate precise block size based on distance and FOV
+            distance = math.sqrt(final_z * final_z + rot_x * rot_x + rot_y * rot_y)
+            block_size = max(1, int((self.width * 0.05) / distance))  # More precise size calculation
+            
+            visible_blocks.append((distance, pixel_x, pixel_y, block_size, block))
+        
+        # Sort by distance (far to near) for proper rendering order
+        visible_blocks.sort(reverse=True)
+        
+        # Render visible blocks with improved precision
+        for distance, screen_x, screen_y, block_size, block in visible_blocks:
             color = self._get_block_color(block.block_type)
             
-            for dy in range(-block_size, block_size + 1):
-                for dx in range(-block_size, block_size + 1):
+            # Render block as filled rectangle with anti-aliasing consideration
+            half_size = block_size // 2
+            for dy in range(-half_size, half_size + 1):
+                for dx in range(-half_size, half_size + 1):
                     px = screen_x + dx
                     py = screen_y + dy
                     
                     if 0 <= px < self.width and 0 <= py < self.height:
-                        self.pixel_buffer[py, px] = color
+                        # Add subtle depth-based shading for better visual quality
+                        depth_factor = max(0.3, min(1.0, 20.0 / distance))
+                        shaded_color = (color * depth_factor).astype(np.uint8)
+                        self.pixel_buffer[py, px] = shaded_color
         
         # Add visual indicators
         self._add_visual_indicators(frame_count)
