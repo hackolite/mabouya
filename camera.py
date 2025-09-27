@@ -94,35 +94,44 @@ class CameraViewer:
     
     def decode_frame(self, frame_b64, width, height, format_type="raw"):
         """Décode une frame base64 en image"""
-        # Décode base64
-        frame_bytes = base64.b64decode(frame_b64)
-        
-        if format_type == "jpeg":
-            # Décompresse le JPEG
-            try:
-                from PIL import Image
-                import io
-                
-                # Ouvre l'image JPEG depuis les bytes
-                img = Image.open(io.BytesIO(frame_bytes))
-                
-                # Convertit en array numpy
-                frame_array = np.array(img)
-                
-                return frame_array
-                
-            except ImportError:
-                print("⚠️  PIL non disponible pour décompresser JPEG")
-                return None
-            except Exception as e:
-                print(f"⚠️  Erreur décompression JPEG: {e}")
-                return None
-        else:
-            # Format brut (raw RGB)
-            frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
-            frame_array = frame_array.reshape((height, width, 3))
+        try:
+            # Décode base64
+            frame_bytes = base64.b64decode(frame_b64)
             
-            return frame_array
+            if format_type == "jpeg":
+                # Décompresse le JPEG
+                try:
+                    from PIL import Image
+                    import io
+                    
+                    # Ouvre l'image JPEG depuis les bytes
+                    img = Image.open(io.BytesIO(frame_bytes))
+                    
+                    # Convertit en array numpy
+                    frame_array = np.array(img)
+                    
+                    return frame_array
+                    
+                except ImportError:
+                    print("⚠️  PIL non disponible pour décompresser JPEG")
+                    return None
+                except Exception as e:
+                    print(f"⚠️  Erreur décompression JPEG: {e}")
+                    return None
+            else:
+                # Format brut (raw RGB)
+                try:
+                    frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
+                    frame_array = frame_array.reshape((height, width, 3))
+                    
+                    return frame_array
+                except Exception as e:
+                    print(f"⚠️  Erreur décodage frame brute: {e}")
+                    return None
+                    
+        except Exception as e:
+            print(f"⚠️  Erreur décodage base64: {e}")
+            return None
     
     def scale_frame_for_display(self, frame):
         """Redimensionne l'image pour un meilleur affichage si nécessaire"""
@@ -230,47 +239,54 @@ class CameraViewer:
                         
                         # Affiche avec OpenCV ou PIL
                         if self.use_opencv:
-                            # OpenCV utilise BGR, on convertit
-                            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                            
-                            # Ajoute infos sur l'image
-                            cv2.putText(
-                                frame_bgr,
-                                f"Frame: {self.frame_count}",
-                                (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7,
-                                (0, 255, 0),
-                                2
-                            )
-                            
-                            cv2.putText(
-                                frame_bgr,
-                                f"Camera: {self.camera_id[:8]}...",
-                                (10, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (255, 255, 255),
-                                1
-                            )
-                            
-                            # Affiche avec une mise à l'échelle adaptative
-                            display_frame = self.scale_frame_for_display(frame_bgr)
-                            cv2.imshow(f"Camera {self.camera_id}", display_frame)
-                            
-                            # Gestion des touches
-                            key = cv2.waitKey(1) & 0xFF
-                            if key == ord('q'):
-                                self.running = False
-                            elif key == ord('s'):
-                                filename = f"camera_{self.camera_id}_{self.frame_count}.jpg"
-                                cv2.imwrite(filename, frame_bgr)
-                                print(f"💾 Frame sauvegardée: {filename}")
-                            elif key == ord('f'):  # Basculer plein écran
-                                self.toggle_fullscreen()
-                            elif key == ord('r'):  # Réinitialiser la taille de fenêtre
-                                cv2.resizeWindow(f"Camera {self.camera_id}", self.window_size[0], self.window_size[1])
-                                print(f"🖼️  Taille de fenêtre réinitialisée: {self.window_size[0]}x{self.window_size[1]}")
+                            try:
+                                # OpenCV utilise BGR, on convertit
+                                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                                
+                                # Ajoute infos sur l'image
+                                cv2.putText(
+                                    frame_bgr,
+                                    f"Frame: {self.frame_count}",
+                                    (10, 30),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.7,
+                                    (0, 255, 0),
+                                    2
+                                )
+                                
+                                cv2.putText(
+                                    frame_bgr,
+                                    f"Camera: {self.camera_id[:8]}...",
+                                    (10, 60),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (255, 255, 255),
+                                    1
+                                )
+                                
+                                # Affiche avec une mise à l'échelle adaptative
+                                display_frame = self.scale_frame_for_display(frame_bgr)
+                                cv2.imshow(f"Camera {self.camera_id}", display_frame)
+                                
+                                # Gestion des touches
+                                key = cv2.waitKey(1) & 0xFF
+                                if key == ord('q'):
+                                    self.running = False
+                                elif key == ord('s'):
+                                    filename = f"camera_{self.camera_id}_{self.frame_count}.jpg"
+                                    cv2.imwrite(filename, frame_bgr)
+                                    print(f"💾 Frame sauvegardée: {filename}")
+                                elif key == ord('f'):  # Basculer plein écran
+                                    self.toggle_fullscreen()
+                                elif key == ord('r'):  # Réinitialiser la taille de fenêtre
+                                    cv2.resizeWindow(f"Camera {self.camera_id}", self.window_size[0], self.window_size[1])
+                                    print(f"🖼️  Taille de fenêtre réinitialisée: {self.window_size[0]}x{self.window_size[1]}")
+                                    
+                            except Exception as e:
+                                print(f"⚠️  Erreur affichage OpenCV: {e}")
+                                print("🖥️  Basculement en mode sans affichage")
+                                self.headless = True
+                                self.use_opencv = False
                         
                         else:
                             # Affichage PIL (moins interactif)

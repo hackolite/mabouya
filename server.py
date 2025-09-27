@@ -18,6 +18,7 @@ import json
 import random
 import base64
 import math
+import time
 from typing import Dict, Set
 from datetime import datetime
 import struct
@@ -43,7 +44,7 @@ class Player(Cube):
 
 class CubeCamera:
     """Cube avec caméra intégrée"""
-    def __init__(self, position, name="Camera", resolution=(320, 240)):
+    def __init__(self, position, name="Camera", resolution=(240, 180)):
         self.id = f"cam_{datetime.now().timestamp()}"
         self.position = list(position)
         self.name = name
@@ -156,14 +157,16 @@ class CubeCamera:
         
         return bytes(pixels)
     
-    def _ray_march(self, ox, oy, oz, dx, dy, dz, world, max_dist=25):
+    def _ray_march(self, ox, oy, oz, dx, dy, dz, world, max_dist=20):
         """Lance un rayon et retourne la couleur du premier bloc touché (optimisé)"""
-        step = 0.5  # Augmenté de 0.1 à 0.5 pour 5x moins d'itérations
+        step = 1.0  # Augmenté à 1.0 pour des steps de 1 bloc complet (25% d'itérations en moins)
         
         # Utilise tous les blocs (réguliers + joueurs)
         all_blocks = world.get_all_blocks()
         
-        for i in range(int(max_dist / step)):
+        # Optimisation: réduit la distance max pour moins d'itérations
+        max_iterations = int(max_dist / step)
+        for i in range(max_iterations):
             # Position actuelle sur le rayon
             x = ox + dx * i * step
             y = oy + dy * i * step
@@ -398,7 +401,7 @@ class MinecraftServer:
         """Crée une caméra"""
         position = data.get("position", [0, 2, 0])
         name = data.get("name", "Camera")
-        resolution = data.get("resolution", (320, 240))  # Résolution par défaut pour performance
+        resolution = data.get("resolution", (240, 180))  # Résolution équilibrée pour performance
         
         # Valide la résolution (limites raisonnables)
         if isinstance(resolution, list) and len(resolution) == 2:
@@ -408,7 +411,7 @@ class MinecraftServer:
             height = max(120, min(1080, height))
             resolution = (width, height)
         else:
-            resolution = (640, 480)  # Valeur par défaut si invalide
+            resolution = (240, 180)  # Valeur par défaut équilibrée pour performance
         
         camera = self.world.add_camera(position, name, resolution)
         
@@ -590,13 +593,27 @@ class MinecraftServer:
     
     async def camera_stream_loop(self, camera):
         """Boucle de streaming caméra"""
-        fps = 5  # Augmenté à 5 FPS pour une meilleure fluidité avec résolution 320x240
-        print(f"🎬 Démarrage streaming caméra {camera.id}")
+        fps = 2  # Réduit de 3 à 2 FPS pour améliorer les performances CPU
+        frame_interval = 1.0 / fps  # Temps entre les frames
+        print(f"🎬 Démarrage streaming caméra {camera.id} à {fps} FPS")
         
         try:
             frame_count = 0
+            last_frame_time = time.time()
+            
             while camera.id in self.world.cameras:
                 frame_count += 1
+                
+                # Contrôle du timing pour maintenir le FPS cible
+                current_time = time.time()
+                time_since_last_frame = current_time - last_frame_time
+                
+                if time_since_last_frame < frame_interval:
+                    # Attend le temps nécessaire pour maintenir le FPS
+                    sleep_time = frame_interval - time_since_last_frame
+                    await asyncio.sleep(sleep_time)
+                
+                last_frame_time = time.time()
                 
                 # Rendu de la vue caméra
                 frame_data = camera.render_view(self.world, frame_count)
@@ -638,8 +655,6 @@ class MinecraftServer:
                     if frame_count % 30 == 0:  # Log périodique sans abonnés
                         print(f"⏸️  Pas d'abonnés pour {camera.id} (frame #{frame_count})")
                 
-                await asyncio.sleep(1/fps)
-                
         except Exception as e:
             print(f"❌ Erreur dans streaming loop: {e}")
             import traceback
@@ -661,7 +676,7 @@ class MinecraftServer:
             frame_array = frame_array.reshape((height, width, 3))
             
             # Crée une image PIL
-            img = Image.fromarray(frame_array, 'RGB')
+            img = Image.fromarray(frame_array)
             
             # Compresse en JPEG
             buffer = io.BytesIO()
