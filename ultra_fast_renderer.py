@@ -1,198 +1,140 @@
-"""
-Ultra Fast Camera Renderer
-==========================
-
-A minimal, ultra-fast camera renderer that prioritizes speed over visual fidelity.
-Uses depth buffer approximation and simplified rendering for real-time performance.
-"""
-
-import math
 import numpy as np
+import math
+from collections import namedtuple
+
+# --- Définition des blocs ---
+Block = namedtuple("Block", ["block_type", "camera", "movable", "traversable"])
 
 class UltraFastRenderer:
-    """Ultra-fast camera renderer optimized for maximum performance"""
-    
-    def __init__(self, resolution=(240, 180)):
-        self.resolution = resolution
-        self.width, self.height = resolution
-        
-        # Pre-allocate pixel buffer
-        self.pixel_buffer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
-        # Simple block lookup for nearest blocks only
-        self.nearby_blocks = []
-        self.sky_color = np.array([135, 206, 235], dtype=np.uint8)
-        self.ground_color = np.array([34, 139, 34], dtype=np.uint8)  # Green ground
-        
-    def update_world(self, world_blocks, camera_position=(0, 0, 0)):
-        """Update world with only the nearest blocks for ultra-fast rendering"""
-        if not world_blocks:
-            self.nearby_blocks = []
-            return
-        
-        cx, cy, cz = camera_position
-        
-        # Keep only the closest blocks (max 20 for real-time performance)
-        block_distances = []
-        for position, block in world_blocks.items():
-            x, y, z = position
-            dist_sq = (x - cx)**2 + (y - cy)**2 + (z - cz)**2
-            if dist_sq < 400:  # Only blocks within 20 units
-                block_distances.append((dist_sq, position, block))
-        
-        # Sort by distance and keep only the closest ones
-        block_distances.sort()
-        self.nearby_blocks = block_distances[:20]  # Max 20 blocks
-        
-        print(f"UltraFastRenderer: Using {len(self.nearby_blocks)} blocks")
-    
+    def __init__(self, width=320, height=240):
+        self.width = width
+        self.height = height
+        self.pixel_buffer = np.zeros((height, width, 3), dtype=np.uint8)
+        self.sky_color = np.array([135, 206, 235], dtype=np.uint8)  # bleu ciel
+        self.blocks = []  # liste de blocs dans le monde
+
+    def add_block(self, x, y, z, block_type="stone", 
+                  camera=False, movable=True, traversable=False):
+        """Ajoute un bloc au monde"""
+        block = Block(block_type, camera, movable, traversable)
+        self.blocks.append(((x, y, z), block))
+
+    def _get_block_color(self, block_type):
+        colors = {
+            "stone": np.array([100, 100, 100], dtype=np.uint8),
+            "grass": np.array([0, 200, 0], dtype=np.uint8),
+            "dirt": np.array([139, 69, 19], dtype=np.uint8),
+            "camera": np.array([200, 0, 0], dtype=np.uint8),
+            "ai": np.array([0, 0, 200], dtype=np.uint8),
+        }
+        return colors.get(block_type, np.array([255, 255, 255], dtype=np.uint8))
+
     def render_camera_view(self, camera_position, camera_rotation, fov=70, frame_count=0):
-        """Ultra-fast camera rendering with improved precision and robustness"""
+        """Rendu caméra avec z-buffer pour précision comparable à Pyglet"""
         cx, cy, cz = camera_position
         yaw, pitch = camera_rotation
-        
-        # Clear buffer with sky color
+
+        # Efface écran
         self.pixel_buffer[:] = self.sky_color
-        
-        # Improved horizon calculation with proper pitch mapping
-        # Pitch ranges from -90 (looking up) to +90 (looking down)
-        pitch_normalized = max(-90, min(90, pitch))  # Clamp pitch
-        horizon_y = int(self.height * (0.5 + pitch_normalized / 180.0))
-        horizon_y = max(0, min(self.height - 1, horizon_y))
-        
-        # Ground color below horizon
-        if horizon_y < self.height:
-            self.pixel_buffer[horizon_y:, :] = self.ground_color
-        
-        # Precise trigonometric calculations
-        yaw_rad = math.radians(yaw)
-        pitch_rad = math.radians(pitch_normalized)
-        cos_yaw = math.cos(yaw_rad)
-        sin_yaw = math.sin(yaw_rad)
-        cos_pitch = math.cos(pitch_rad)
-        sin_pitch = math.sin(pitch_rad)
-        
-        # FOV calculations for proper perspective
+        z_buffer = np.full((self.height, self.width), np.inf)  # profondeur infinie
+
+        # Prépare matrices de rotation
+        yaw_rad, pitch_rad = math.radians(yaw), math.radians(pitch)
+        cos_y, sin_y = math.cos(yaw_rad), math.sin(yaw_rad)
+        cos_p, sin_p = math.cos(pitch_rad), math.sin(pitch_rad)
+
+        # Projection params
         fov_rad = math.radians(fov)
+        aspect = self.width / self.height
         tan_half_fov = math.tan(fov_rad / 2)
-        aspect_ratio = self.width / self.height
-        
-        # Sort blocks by distance for proper depth ordering
-        visible_blocks = []
-        for dist_sq, position, block in self.nearby_blocks:
-            bx, by, bz = position
-            
-            # Transform block position relative to camera
-            rel_x = bx - cx
-            rel_y = by - cy  
-            rel_z = bz - cz
-            
-            # Apply camera rotation transformations
-            # First rotate around Y-axis (yaw)
-            rot_x = rel_x * cos_yaw - rel_z * sin_yaw
-            rot_z = rel_x * sin_yaw + rel_z * cos_yaw
-            
-            # Then rotate around X-axis (pitch) 
-            rot_y = rel_y * cos_pitch + rot_z * sin_pitch
-            final_z = -rel_y * sin_pitch + rot_z * cos_pitch
-            
-            # Skip blocks behind camera (with small epsilon for precision)
-            if final_z <= 0.1:
+
+        for (bx, by, bz), block in self.blocks:
+            # Sommets d’un cube centré
+            half = 0.5
+            vertices = [
+                (bx+dx*half, by+dy*half, bz+dz*half)
+                for dx in (-1,1) for dy in (-1,1) for dz in (-1,1)
+            ]
+
+            # Transforme sommets caméra
+            proj_points = []
+            for vx, vy, vz in vertices:
+                rel_x, rel_y, rel_z = vx-cx, vy-cy, vz-cz
+
+                # Rotation yaw (Y)
+                xz = rel_x*cos_y - rel_z*sin_y
+                zz = rel_x*sin_y + rel_z*cos_y
+
+                # Rotation pitch (X)
+                yz = rel_y*cos_p - zz*sin_p
+                zz2 = rel_y*sin_p + zz*cos_p
+
+                if zz2 <= 0.1:
+                    continue  # derrière la caméra
+
+                # Projection perspective
+                sx = (xz / zz2) / (tan_half_fov * aspect)
+                sy = (yz / zz2) / tan_half_fov
+                px = int((sx+1)*0.5*self.width)
+                py = int((1-sy)*0.5*self.height)
+                proj_points.append((px, py, zz2))
+
+            if not proj_points:
                 continue
-            
-            # Precise perspective projection with proper FOV
-            screen_x = (rot_x / final_z) / (tan_half_fov * aspect_ratio)
-            screen_y = -(rot_y / final_z) / tan_half_fov
-            
-            # Convert to pixel coordinates
-            pixel_x = int((screen_x + 1) * 0.5 * self.width)
-            pixel_y = int((screen_y + 1) * 0.5 * self.height)
-            
-            # Skip blocks outside screen bounds
-            if pixel_x < -50 or pixel_x >= self.width + 50 or pixel_y < -50 or pixel_y >= self.height + 50:
-                continue
-                
-            # Calculate precise block size based on distance and FOV
-            distance = math.sqrt(final_z * final_z + rot_x * rot_x + rot_y * rot_y)
-            block_size = max(1, int((self.width * 0.05) / distance))  # More precise size calculation
-            
-            visible_blocks.append((distance, pixel_x, pixel_y, block_size, block))
-        
-        # Sort by distance (far to near) for proper rendering order
-        visible_blocks.sort(reverse=True)
-        
-        # Render visible blocks with improved precision
-        for distance, screen_x, screen_y, block_size, block in visible_blocks:
+
+            # Bounding box écran du cube
+            min_x = max(0, min(p[0] for p in proj_points))
+            max_x = min(self.width-1, max(p[0] for p in proj_points))
+            min_y = max(0, min(p[1] for p in proj_points))
+            max_y = min(self.height-1, max(p[1] for p in proj_points))
+
+            # Couleur du bloc
             color = self._get_block_color(block.block_type)
-            
-            # Render block as filled rectangle with anti-aliasing consideration
-            half_size = block_size // 2
-            for dy in range(-half_size, half_size + 1):
-                for dx in range(-half_size, half_size + 1):
-                    px = screen_x + dx
-                    py = screen_y + dy
-                    
-                    if 0 <= px < self.width and 0 <= py < self.height:
-                        # Add subtle depth-based shading for better visual quality
-                        depth_factor = max(0.3, min(1.0, 20.0 / distance))
-                        shaded_color = (color * depth_factor).astype(np.uint8)
-                        self.pixel_buffer[py, px] = shaded_color
-        
-        # Add visual indicators
-        self._add_visual_indicators(frame_count)
-        
-        return self.pixel_buffer.tobytes()
-    
-    def _get_block_color(self, block_type):
-        """Get RGB color for block type"""
-        colors = {
-            "grass": [34, 139, 34],    # Green
-            "stone": [128, 128, 128],  # Gray  
-            "dirt": [139, 69, 19],     # Brown
-            "player": [0, 150, 255],   # Blue
-            "camera": [255, 255, 0],   # Yellow
-            "ai_agent": [255, 0, 255], # Magenta
-        }
-        return np.array(colors.get(block_type, [139, 69, 19]), dtype=np.uint8)
-    
-    def _add_visual_indicators(self, frame_count):
-        """Add LED indicator and frame counter"""
-        width, height = self.width, self.height
-        
-        # LED indicator in top-right corner
-        led_on = (frame_count // 3) % 2 == 0
-        led_color = [0, 255, 0] if led_on else [0, 120, 0]
-        
-        for py in range(min(8, height)):
-            for px in range(max(0, width - 10), width):
-                if px >= width - 8 and py <= 6:
-                    self.pixel_buffer[py, px] = led_color
-        
-        # Simple frame counter digit in bottom-right
-        digit = frame_count % 10
-        digit_pattern = self._get_digit_pattern(digit)
-        
-        start_y = max(0, height - 8)
-        start_x = max(0, width - 6)
-        
-        for dy in range(min(8, height - start_y)):
-            for dx in range(min(5, width - start_x)):
-                if dy < len(digit_pattern) and dx < len(digit_pattern[dy]):
-                    if digit_pattern[dy][dx]:
-                        self.pixel_buffer[start_y + dy, start_x + dx] = [255, 255, 0]  # Yellow
-    
-    def _get_digit_pattern(self, digit):
-        """Get 5x8 pattern for digit display"""
-        patterns = {
-            0: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
-            1: [[0,0,1,0,0], [0,1,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [1,1,1,1,1]],
-            2: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1]],
-            3: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
-            4: [[1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
-            5: [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
-            6: [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
-            7: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
-            8: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
-            9: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]]
-        }
-        return patterns.get(digit, patterns[0])
+            avg_depth = np.mean([p[2] for p in proj_points])
+
+            for py in range(min_y, max_y+1):
+                for px in range(min_x, max_x+1):
+                    if avg_depth < z_buffer[py, px]:
+                        z_buffer[py, px] = avg_depth
+                        depth_factor = max(0.3, min(1.0, 20.0/avg_depth))
+                        self.pixel_buffer[py, px] = (color * depth_factor).astype(np.uint8)
+
+        return self.pixel_buffer
+
+# --- Exemple d’utilisation ---
+if __name__ == "__main__":
+    import cv2
+    import time
+
+    renderer = UltraFastRenderer(320, 240)
+
+    # Création d’une petite scène
+    for x in range(-3, 4):
+        for z in range(-3, 4):
+            renderer.add_block(x, -1, z, "grass")  # sol
+    renderer.add_block(0, 0, 3, "stone")
+    renderer.add_block(1, 0, 5, "camera")
+    renderer.add_block(-2, 0, 4, "ai")
+
+    # Boucle de rendu
+    cx, cy, cz = 0, 1, 0
+    yaw, pitch = 0, 0
+
+    last = time.time()
+    frames = 0
+
+    while True:
+        frame = renderer.render_camera_view((cx, cy, cz), (yaw, pitch))
+        cv2.imshow("Camera View", frame)
+        yaw += 1  # tourne la caméra
+        frames += 1
+
+        if time.time() - last >= 1:
+            print("FPS:", frames)
+            frames = 0
+            last = time.time()
+
+        if cv2.waitKey(1) == 27:  # ESC pour quitter
+            break
+
+    cv2.destroyAllWindows()
