@@ -155,6 +155,10 @@ class MinecraftWindow(pyglet.window.Window):
         self.camera_batch = pyglet.graphics.Batch()
         self._camera_cubes = {}
         
+        # Player cube (rendu comme cube bleu)
+        self.player_batch = pyglet.graphics.Batch()
+        self.player_cube = None
+        
         # Réseau
         self.network = NetworkClient(self)
         self.network.start()
@@ -176,6 +180,9 @@ class MinecraftWindow(pyglet.window.Window):
         
         # Update loop
         pyglet.clock.schedule_interval(self.update, 1.0 / TICKS_PER_SEC)
+        
+        # Initialize player cube
+        self._update_player_cube()
         
     def setup_crosshair(self):
         """Crée le réticule"""
@@ -275,6 +282,25 @@ class MinecraftWindow(pyglet.window.Window):
         color = (255, 255, 0) * 24  # Jaune
         
         self._camera_cubes[cam_id] = self.camera_batch.add(
+            24, GL_QUADS, None,
+            ('v3f/static', vertices),
+            ('c3B/static', color)
+        )
+    
+    def _update_player_cube(self):
+        """Met à jour ou crée le cube du joueur"""
+        # Supprime l'ancien cube s'il existe
+        if self.player_cube:
+            self.player_cube.delete()
+        
+        # Position du joueur
+        x, y, z = self.position
+        
+        # Crée un nouveau cube à la position du joueur
+        vertices = cube_vertices(x, y - 1, z, 0.4)  # Légèrement plus petit et décalé vers le bas
+        color = (0, 150, 255) * 24  # Bleu pour le joueur
+        
+        self.player_cube = self.player_batch.add(
             24, GL_QUADS, None,
             ('v3f/static', vertices),
             ('c3B/static', color)
@@ -416,9 +442,16 @@ class MinecraftWindow(pyglet.window.Window):
             self.dy = max(self.dy, -TERMINAL_VELOCITY)
             dy += self.dy * dt
         
+        # Store old position to check if it changed
+        old_position = self.position
+        
         x, y, z = self.position
         x, y, z = self.collide((x + dx, y + dy, z + dz), PLAYER_HEIGHT)
         self.position = (x, y, z)
+        
+        # Update player cube if position changed
+        if old_position != self.position:
+            self._update_player_cube()
         
         # Mise à jour labels
         x, y, z = self.position
@@ -533,6 +566,7 @@ class MinecraftWindow(pyglet.window.Window):
         glColor3d(1, 1, 1)
         self.batch.draw()
         self.camera_batch.draw()
+        self.player_batch.draw()
         
         # 2D
         self.set_2d()
