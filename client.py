@@ -118,7 +118,13 @@ class NetworkClient:
     async def _connect(self):
         """Connexion au serveur"""
         try:
-            self.websocket = await websockets.connect(self.uri)
+            # Configure la connexion WebSocket avec des paramètres de keepalive appropriés
+            self.websocket = await websockets.connect(
+                self.uri,
+                ping_interval=20,  # Envoie un ping toutes les 20 secondes
+                ping_timeout=10,   # Timeout de 10 secondes pour recevoir un pong
+                close_timeout=10   # Timeout de 10 secondes pour fermer proprement
+            )
             self.connected = True
             print("Connecté au serveur")
             
@@ -176,9 +182,23 @@ class NetworkClient:
                         lambda dt, pid=player_id, pos=position: self.window._update_other_player_position(pid, pos),
                         0
                     )
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"Connexion fermée: {e}")
+            self.connected = False
+        except websockets.exceptions.InvalidMessage as e:
+            print(f"Message WebSocket invalide: {e}")
+            self.connected = False
         except Exception as e:
             print(f"Erreur réseau: {e}")
             self.connected = False
+        finally:
+            # Nettoyage de la connexion
+            if self.websocket:
+                try:
+                    await self.websocket.close()
+                except:
+                    pass
+                self.websocket = None
     
     def send_message(self, message):
         """Envoie un message"""
