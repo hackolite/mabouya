@@ -120,6 +120,26 @@ class NetworkClient:
                         lambda dt, pos=position: self.window._remove_block_local(pos),
                         0
                     )
+                elif data["type"] == "player_joined":
+                    player_id = data["player_id"]
+                    position = tuple(data["position"])
+                    pyglet.clock.schedule_once(
+                        lambda dt, pid=player_id, pos=position: self.window._add_other_player(pid, pos),
+                        0
+                    )
+                elif data["type"] == "player_left":
+                    player_id = data["player_id"]
+                    pyglet.clock.schedule_once(
+                        lambda dt, pid=player_id: self.window._remove_other_player(pid),
+                        0
+                    )
+                elif data["type"] == "player_position_changed":
+                    player_id = data["player_id"]
+                    position = tuple(data["position"])
+                    pyglet.clock.schedule_once(
+                        lambda dt, pid=player_id, pos=position: self.window._update_other_player_position(pid, pos),
+                        0
+                    )
         except Exception as e:
             print(f"Erreur réseau: {e}")
             self.connected = False
@@ -158,6 +178,10 @@ class MinecraftWindow(pyglet.window.Window):
         # Player cube (rendu comme cube bleu)
         self.player_batch = pyglet.graphics.Batch()
         self.player_cube = None
+        
+        # Other players (rendered as colored cubes)
+        self.other_players = {}  # {player_id: {"position": (x, y, z), "cube": cube_object}}
+        self.other_players_batch = pyglet.graphics.Batch()
         
         # Réseau
         self.network = NetworkClient(self)
@@ -199,12 +223,19 @@ class MinecraftWindow(pyglet.window.Window):
         
         for pos_str, block_type in world_data["blocks"].items():
             x, y, z = map(int, pos_str.split(','))
-            self._add_block_local((x, y, z), block_type)
+            # Skip player blocks as they'll be handled separately
+            if block_type != "player":
+                self._add_block_local((x, y, z), block_type)
         
         # Charge les caméras existantes
         for cam_id, cam_data in world_data.get("cameras", {}).items():
             self.cameras[cam_id] = cam_data
             self._add_camera_visual(cam_data)
+        
+        # Charge les joueurs existants (sauf soi-même)
+        for player_id, player_data in world_data.get("players", {}).items():
+            position = tuple(player_data["position"])
+            self._add_other_player(player_id, position)
     
     def add_block(self, position, block_type):
         """Ajoute un bloc localement et envoie au serveur"""
@@ -311,6 +342,47 @@ class MinecraftWindow(pyglet.window.Window):
         self.cameras[camera["id"]] = camera
         self._add_camera_visual(camera)
         self.show_message(f"Caméra créée: {camera['name']}")
+    
+    def _add_other_player(self, player_id, position):
+        """Ajoute un autre joueur au monde"""
+        x, y, z = position
+        vertices = cube_vertices(x, y - 1, z, 0.4)  # Même taille que le joueur local
+        color = (255, 100, 100) * 24  # Rouge pour les autres joueurs
+        
+        cube = self.other_players_batch.add(
+            24, GL_QUADS, None,
+            ('v3f/static', vertices),
+            ('c3B/static', color)
+        )
+        
+        self.other_players[player_id] = {"position": position, "cube": cube}
+        print(f"👤 Joueur {player_id} ajouté à {position}")
+    
+    def _remove_other_player(self, player_id):
+        """Supprime un autre joueur du monde"""
+        if player_id in self.other_players:
+            self.other_players[player_id]["cube"].delete()
+            del self.other_players[player_id]
+            print(f"👤 Joueur {player_id} supprimé")
+    
+    def _update_other_player_position(self, player_id, new_position):
+        """Met à jour la position d'un autre joueur"""
+        if player_id in self.other_players:
+            # Supprime l'ancien cube
+            self.other_players[player_id]["cube"].delete()
+            
+            # Crée un nouveau cube à la nouvelle position
+            x, y, z = new_position
+            vertices = cube_vertices(x, y - 1, z, 0.4)
+            color = (255, 100, 100) * 24  # Rouge pour les autres joueurs
+            
+            cube = self.other_players_batch.add(
+                24, GL_QUADS, None,
+                ('v3f/static', vertices),
+                ('c3B/static', color)
+            )
+            
+            self.other_players[player_id] = {"position": new_position, "cube": cube}
     
     def show_message(self, text, duration=3.0):
         """Affiche un message temporaire"""
@@ -461,7 +533,7 @@ class MinecraftWindow(pyglet.window.Window):
         
         # Mise à jour labels
         x, y, z = self.position
-        self.label.text = f'Position: ({x:.1f}, {y:.1f}, {z:.1f})\nCaméras: {len(self.cameras)}\nC: Créer caméra | L: Lister'
+        self.label.text = f'Position: ({x:.1f}, {y:.1f}, {z:.1f})\nCaméras: {len(self.cameras)} | Joueurs: {len(self.other_players)}\nC: Créer caméra | L: Lister'
     
     def on_mouse_press(self, x, y, button, modifiers):
         """Gestion souris"""
@@ -573,6 +645,7 @@ class MinecraftWindow(pyglet.window.Window):
         self.batch.draw()
         self.camera_batch.draw()
         self.player_batch.draw()
+        self.other_players_batch.draw()  # Dessine les autres joueurs
         
         # 2D
         self.set_2d()

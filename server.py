@@ -29,6 +29,18 @@ class Cube:
         self.block_type = block_type
         self.id = f"cube_{position[0]}_{position[1]}_{position[2]}"
 
+class Player(Cube):
+    """Cube représentant un joueur"""
+    def __init__(self, position, player_id, name="Player"):
+        super().__init__(position, "player")
+        self.player_id = player_id
+        self.name = name
+        self.id = f"player_{player_id}"
+    
+    def update_position(self, new_position):
+        """Met à jour la position du joueur"""
+        self.position = tuple(new_position)
+
 class CubeCamera:
     """Cube avec caméra intégrée"""
     def __init__(self, position, name="Camera"):
@@ -148,6 +160,9 @@ class CubeCamera:
         """Lance un rayon et retourne la couleur du premier bloc touché (optimisé)"""
         step = 0.5  # Augmenté de 0.1 à 0.5 pour 5x moins d'itérations
         
+        # Utilise tous les blocs (réguliers + joueurs)
+        all_blocks = world.get_all_blocks()
+        
         for i in range(int(max_dist / step)):
             # Position actuelle sur le rayon
             x = ox + dx * i * step
@@ -157,13 +172,15 @@ class CubeCamera:
             # Vérifie si on touche un bloc
             block_pos = (int(math.floor(x)), int(math.floor(y)), int(math.floor(z)))
             
-            if block_pos in world.blocks:
-                block = world.blocks[block_pos]
+            if block_pos in all_blocks:
+                block = all_blocks[block_pos]
                 # Retourne la couleur selon le type de bloc
                 if block.block_type == "grass":
                     return [34, 139, 34]  # Vert
                 elif block.block_type == "stone":
                     return [128, 128, 128]  # Gris
+                elif block.block_type == "player":
+                    return [0, 150, 255]  # Bleu pour les joueurs
                 else:
                     return [139, 69, 19]  # Marron (terre)
         
@@ -190,6 +207,7 @@ class World:
         self.size = size
         self.blocks = {}
         self.cameras = {}
+        self.players = {}  # {player_id: Player} to track players as blocks
         self.generate_world()
     
     def generate_world(self):
@@ -222,6 +240,34 @@ class World:
         """Récupère une caméra"""
         return self.cameras.get(camera_id)
     
+    def add_player(self, player_id, position, name="Player"):
+        """Ajoute un joueur au monde comme un bloc"""
+        player = Player(position, player_id, name)
+        self.players[player_id] = player
+        return player
+    
+    def update_player_position(self, player_id, new_position):
+        """Met à jour la position d'un joueur"""
+        if player_id in self.players:
+            self.players[player_id].update_position(new_position)
+            return True
+        return False
+    
+    def remove_player(self, player_id):
+        """Supprime un joueur du monde"""
+        if player_id in self.players:
+            del self.players[player_id]
+            return True
+        return False
+    
+    def get_all_blocks(self):
+        """Retourne tous les blocs (réguliers + joueurs) pour le ray-marching"""
+        all_blocks = dict(self.blocks)
+        # Ajoute les joueurs comme des blocs
+        for player in self.players.values():
+            all_blocks[player.position] = player
+        return all_blocks
+    
     def to_dict(self):
         """Sérialise le monde"""
         blocks_data = {}
@@ -229,10 +275,16 @@ class World:
             key = f"{pos[0]},{pos[1]},{pos[2]}"
             blocks_data[key] = cube.block_type
         
+        # Ajoute les joueurs comme des blocs
+        for player in self.players.values():
+            key = f"{player.position[0]},{player.position[1]},{player.position[2]}"
+            blocks_data[key] = player.block_type
+        
         return {
             "size": self.size,
             "blocks": blocks_data,
-            "cameras": {cid: cam.to_dict() for cid, cam in self.cameras.items()}
+            "cameras": {cid: cam.to_dict() for cid, cam in self.cameras.items()},
+            "players": {pid: {"position": list(p.position), "name": p.name} for pid, p in self.players.items()}
         }
 
 class MinecraftServer:
@@ -260,10 +312,23 @@ class MinecraftServer:
     async def handle_client(self, websocket, path):
         """Gère une connexion client"""
         self.clients.add(websocket)
-        print(f"✅ Client connecté: {websocket.remote_address}")
+        player_id = f"player_{id(websocket)}"
+        print(f"✅ Client connecté: {websocket.remote_address} (ID: {player_id})")
+        
+        # Ajoute le joueur au monde à une position par défaut
+        default_position = [0, 2, 0]  # Au-dessus du sol
+        self.world.add_player(player_id, default_position, f"Joueur_{len(self.clients)}")
+        self.player_positions[websocket] = tuple(default_position)
         
         # Envoie le monde initial
         await self.send_world_state(websocket)
+        
+        # Broadcast l'arrivée du nouveau joueur à tous les autres clients
+        await self.broadcast_to_all({
+            "type": "player_joined",
+            "player_id": player_id,
+            "position": default_position
+        })
         
         try:
             async for message in websocket:
@@ -275,9 +340,15 @@ class MinecraftServer:
             # Nettoie les abonnements caméra
             for subscribers in self.camera_subscribers.values():
                 subscribers.discard(websocket)
-            # Nettoie la position du joueur
+            # Supprime le joueur du monde
             if websocket in self.player_positions:
+                self.world.remove_player(player_id)
                 del self.player_positions[websocket]
+                # Broadcast la déconnexion du joueur
+                await self.broadcast_to_all({
+                    "type": "player_left", 
+                    "player_id": player_id
+                })
     
     async def handle_message(self, websocket, message):
         """Route les messages"""
@@ -429,14 +500,22 @@ class MinecraftServer:
     async def handle_player_position_update(self, websocket, data):
         """Met à jour la position du joueur côté serveur"""
         position = data.get("position", [0, 0, 0])
+        player_id = f"player_{id(websocket)}"
         
-        # Stocke la position du joueur
+        # Met à jour la position dans le monde
+        old_position = self.player_positions.get(websocket)
+        self.world.update_player_position(player_id, position)
         self.player_positions[websocket] = tuple(position)
         
         print(f"🚶 Position joueur {websocket.remote_address} mise à jour: {position}")
         
-        # Optionnel: Broadcast aux autres clients pour le multijoueur
-        # Pour l'instant, on log juste la position côté serveur
+        # Broadcast la nouvelle position à tous les autres clients
+        await self.broadcast_to_others(websocket, {
+            "type": "player_position_changed",
+            "player_id": player_id,
+            "position": position,
+            "old_position": list(old_position) if old_position else None
+        })
     
     async def handle_get_player_positions(self, websocket):
         """Renvoie les positions de tous les joueurs connectés"""
@@ -466,6 +545,24 @@ class MinecraftServer:
                 disconnected.append(client)
         
         # Nettoie les clients déconnectés
+        for client in disconnected:
+            self.clients.discard(client)
+    
+    async def broadcast_to_others(self, sender_websocket, message):
+        """Envoie un message à tous les clients sauf l'expéditeur"""
+        message_str = json.dumps(message)
+        disconnected = []
+        
+        for client in self.clients:
+            if client != sender_websocket:
+                try:
+                    await client.send(message_str)
+                except:
+                    disconnected.append(client)
+        
+        # Nettoie les clients déconnectés
+        for client in disconnected:
+            self.clients.discard(client)
         for client in disconnected:
             self.clients.discard(client)
     
