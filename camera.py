@@ -92,16 +92,37 @@ class CameraViewer:
         
         return True
     
-    def decode_frame(self, frame_b64, width, height):
+    def decode_frame(self, frame_b64, width, height, format_type="raw"):
         """Décode une frame base64 en image"""
         # Décode base64
         frame_bytes = base64.b64decode(frame_b64)
         
-        # Convertit en array numpy
-        frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
-        frame_array = frame_array.reshape((height, width, 3))
-        
-        return frame_array
+        if format_type == "jpeg":
+            # Décompresse le JPEG
+            try:
+                from PIL import Image
+                import io
+                
+                # Ouvre l'image JPEG depuis les bytes
+                img = Image.open(io.BytesIO(frame_bytes))
+                
+                # Convertit en array numpy
+                frame_array = np.array(img)
+                
+                return frame_array
+                
+            except ImportError:
+                print("⚠️  PIL non disponible pour décompresser JPEG")
+                return None
+            except Exception as e:
+                print(f"⚠️  Erreur décompression JPEG: {e}")
+                return None
+        else:
+            # Format brut (raw RGB)
+            frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
+            frame_array = frame_array.reshape((height, width, 3))
+            
+            return frame_array
     
     def scale_frame_for_display(self, frame):
         """Redimensionne l'image pour un meilleur affichage si nécessaire"""
@@ -181,23 +202,31 @@ class CameraViewer:
                         
                         # Sauvegarde optionnelle
                         if self.save_frames and (self.frame_count % 20 == 0):  # Toutes les 20 frames
+                            format_type = data.get("format", "raw")
                             frame = self.decode_frame(
                                 data["frame"],
                                 data["width"],
-                                data["height"]
+                                data["height"],
+                                format_type
                             )
-                            filename = f"camera_{self.camera_id[:8]}_{self.frame_count}.png"
-                            if HAS_PIL:
-                                img = Image.fromarray(frame)
-                                img.save(filename)
-                                print(f"💾 Frame sauvegardée: {filename}")
+                            if frame is not None:
+                                filename = f"camera_{self.camera_id[:8]}_{self.frame_count}.png"
+                                if HAS_PIL:
+                                    img = Image.fromarray(frame)
+                                    img.save(filename)
+                                    print(f"💾 Frame sauvegardée: {filename}")
                     else:
                         # Mode avec affichage
+                        format_type = data.get("format", "raw")
                         frame = self.decode_frame(
                             data["frame"],
                             data["width"],
-                            data["height"]
+                            data["height"],
+                            format_type
                         )
+                        
+                        if frame is None:
+                            continue  # Skip cette frame si décodage échoué
                         
                         # Affiche avec OpenCV ou PIL
                         if self.use_opencv:
