@@ -44,7 +44,7 @@ class CubeCamera:
         self.rotation[0] += yaw_delta
         self.rotation[1] = max(-90, min(90, self.rotation[1] + pitch_delta))
     
-    def render_view(self, world):
+    def render_view(self, world, frame_count=0):
         """Génère une vue de la caméra en regardant réellement le monde"""
         width, height = self.resolution
         pixels = []
@@ -97,6 +97,49 @@ class CubeCamera:
                 
                 # Ray marching simple
                 color = self._ray_march(cx, cy, cz, ray_x, ray_y, ray_z, world)
+                
+                # Ajoute un indicateur visuel de mise à jour en cours
+                # LED clignotante dans le coin supérieur droit pour montrer que c'est "live"
+                if px >= width - 10 and py <= 8:
+                    # LED qui clignote selon le frame count
+                    led_on = (frame_count // 3) % 2 == 0  # Clignote toutes les 3 frames
+                    if px >= width - 8 and py <= 6:
+                        if led_on:
+                            color = [0, 255, 0]  # Vert vif = caméra live
+                        else:
+                            color = [0, 120, 0]  # Vert foncé quand éteint
+                    elif px >= width - 10 and py <= 8:
+                        # Bordure autour de la LED
+                        if led_on:
+                            color = [0, 200, 0]  # Vert moyennement vif
+                        else:
+                            color = [0, 80, 0]   # Vert très foncé
+                
+                # Ajoute un petit indicateur numérique pour le frame count dans le coin inférieur droit
+                if px >= width - 15 and py >= height - 10:
+                    # Affiche les derniers chiffres du frame count comme une grille de pixels
+                    digit = frame_count % 10
+                    rel_x = px - (width - 15)
+                    rel_y = py - (height - 10)
+                    
+                    # Matrice simple pour afficher les chiffres 0-9 (5x8 pixels)
+                    digit_patterns = {
+                        0: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
+                        1: [[0,0,1,0,0], [0,1,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [1,1,1,1,1]],
+                        2: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1]],
+                        3: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
+                        4: [[1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
+                        5: [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
+                        6: [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
+                        7: [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
+                        8: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
+                        9: [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]]
+                    }
+                    
+                    if rel_x < 5 and rel_y < 8 and digit in digit_patterns:
+                        if digit_patterns[digit][rel_y][rel_x]:
+                            color = [255, 255, 0]  # Jaune pour le compteur
+                
                 pixels.extend(color)
         
         return bytes(pixels)
@@ -401,7 +444,7 @@ class MinecraftServer:
                 frame_count += 1
                 
                 # Rendu de la vue caméra
-                frame_data = camera.render_view(self.world)
+                frame_data = camera.render_view(self.world, frame_count)
                 
                 # Encode en base64
                 frame_b64 = base64.b64encode(frame_data).decode('utf-8')
