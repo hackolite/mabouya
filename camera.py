@@ -58,39 +58,53 @@ class CameraViewer:
         
     async def connect(self):
         """Connexion au serveur"""
-        self.websocket = await websockets.connect(self.uri)
-        print(f"Connecté à {self.uri}")
-        
-        # Ignore les messages initiaux (world_state et player_joined)
-        await self.websocket.recv()  # world_state
-        await self.websocket.recv()  # player_joined
-        
-        # S'abonne à la caméra
-        await self.websocket.send(json.dumps({
-            "type": "subscribe_camera",
-            "camera_id": self.camera_id
-        }))
-        
-        response = await self.websocket.recv()
-        data = json.loads(response)
-        
-        if data["type"] == "subscribed":
-            print(f"✅ Abonné à la caméra {self.camera_id}")
-            if self.headless:
-                print("Mode sans affichage - Appuyez sur Ctrl+C pour quitter")
+        try:
+            # Configure la connexion WebSocket avec des paramètres de keepalive appropriés
+            self.websocket = await websockets.connect(
+                self.uri,
+                ping_interval=20,  # Envoie un ping toutes les 20 secondes  
+                ping_timeout=10,   # Timeout de 10 secondes pour recevoir un pong
+                close_timeout=10   # Timeout de 10 secondes pour fermer proprement
+            )
+            print(f"Connecté à {self.uri}")
+            
+            # Ignore les messages initiaux (world_state et player_joined)
+            await self.websocket.recv()  # world_state
+            await self.websocket.recv()  # player_joined
+            
+            # S'abonne à la caméra
+            await self.websocket.send(json.dumps({
+                "type": "subscribe_camera",
+                "camera_id": self.camera_id
+            }))
+            
+            response = await self.websocket.recv()
+            data = json.loads(response)
+            
+            if data["type"] == "subscribed":
+                print(f"✅ Abonné à la caméra {self.camera_id}")
+                if self.headless:
+                    print("Mode sans affichage - Appuyez sur Ctrl+C pour quitter")
+                else:
+                    print("Contrôles:")
+                    print("  'q' - Quitter")
+                    print("  's' - Sauvegarder la frame actuelle")
+                    print("  'f' - Basculer plein écran/fenêtré")
+                    print("  'r' - Réinitialiser la taille de fenêtre")
+                self.running = True
             else:
-                print("Contrôles:")
-                print("  'q' - Quitter")
-                print("  's' - Sauvegarder la frame actuelle")
-                print("  'f' - Basculer plein écran/fenêtré")
-                print("  'r' - Réinitialiser la taille de fenêtre")
-            self.running = True
-        else:
-            error_msg = data.get('message', "Impossible de s'abonner")
-            print(f"❌ Erreur: {error_msg}")
+                error_msg = data.get('message', "Impossible de s'abonner")
+                print(f"❌ Erreur: {error_msg}")
+                return False
+            
+            return True
+            
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"❌ Connexion fermée: {e}")
             return False
-        
-        return True
+        except Exception as e:
+            print(f"❌ Erreur de connexion: {e}")
+            return False
     
     def decode_frame(self, frame_b64, width, height, format_type="raw"):
         """Décode une frame base64 en image"""
@@ -306,6 +320,10 @@ class CameraViewer:
         except asyncio.TimeoutError:
             print("⏱️  Timeout - Pas de frames reçues dans les 10 secondes")
             print("💡 Vérifiez que le serveur est démarré et que la caméra existe")
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"📡 Connexion fermée par le serveur: {e}")
+        except websockets.exceptions.InvalidMessage as e:
+            print(f"📡 Message WebSocket invalide: {e}")
         except KeyboardInterrupt:
             print("\n⏹️  Arrêté par l'utilisateur")
         except Exception as e:
@@ -321,39 +339,65 @@ class CameraViewer:
     
     async def start(self):
         """Démarre le viewer"""
-        if await self.connect():
-            await self.stream_loop()
-        
-        if self.websocket:
-            await self.websocket.close()
+        try:
+            if await self.connect():
+                await self.stream_loop()
+        finally:
+            # Ferme proprement la connexion WebSocket
+            if self.websocket:
+                try:
+                    await self.websocket.close()
+                except:
+                    pass
+                self.websocket = None
 
 async def list_cameras(uri="ws://localhost:8765"):
     """Liste les caméras disponibles"""
-    websocket = await websockets.connect(uri)
-    
-    # Ignore les messages initiaux (world_state et player_joined)
-    await websocket.recv()  # world_state
-    await websocket.recv()  # player_joined
-    
-    # Demande la liste
-    await websocket.send(json.dumps({"type": "get_cameras"}))
-    response = await websocket.recv()
-    data = json.loads(response)
-    
-    await websocket.close()
-    
-    if data["type"] == "cameras_list":
-        cameras = data["cameras"]
-        if cameras:
-            print("\n📹 Caméras disponibles:")
-            for cam_id, cam_data in cameras.items():
-                print(f"   - {cam_data['name']}")
-                print(f"     ID: {cam_id}")
-                print(f"     Position: {cam_data['position']}")
-                print()
-            return list(cameras.keys())
+    websocket = None
+    try:
+        # Configure la connexion WebSocket avec des paramètres de keepalive appropriés
+        websocket = await websockets.connect(
+            uri,
+            ping_interval=20,  # Envoie un ping toutes les 20 secondes  
+            ping_timeout=10,   # Timeout de 10 secondes pour recevoir un pong
+            close_timeout=10   # Timeout de 10 secondes pour fermer proprement
+        )
+        
+        # Ignore les messages initiaux (world_state et player_joined)
+        await websocket.recv()  # world_state
+        await websocket.recv()  # player_joined
+        
+        # Demande la liste
+        await websocket.send(json.dumps({"type": "get_cameras"}))
+        response = await websocket.recv()
+        data = json.loads(response)
+        
+        if data["type"] == "cameras_list":
+            cameras = data["cameras"]
+            if cameras:
+                print("\n📹 Caméras disponibles:")
+                for cam_id, cam_data in cameras.items():
+                    print(f"   - {cam_data['name']}")
+                    print(f"     ID: {cam_id}")
+                    print(f"     Position: {cam_data['position']}")
+                    print()
+                return list(cameras.keys())
+            else:
+                print("❌ Aucune caméra disponible")
+                return []
         else:
-            print("❌ Aucune caméra disponible")
+            print("❌ Erreur lors de la récupération des caméras")
+            return []
+            
+    except Exception as e:
+        print(f"❌ Erreur lors de la connexion: {e}")
+        return []
+    finally:
+        if websocket:
+            try:
+                await websocket.close()
+            except:
+                pass
             return []
     
     return []

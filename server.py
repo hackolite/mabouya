@@ -310,7 +310,10 @@ class MinecraftServer:
         async with websockets.serve(
             lambda websocket: self.handle_client(websocket, None), 
             self.host, 
-            self.port
+            self.port,
+            ping_interval=20,  # Envoie un ping toutes les 20 secondes
+            ping_timeout=10,   # Timeout de 10 secondes pour recevoir un pong
+            close_timeout=10   # Timeout de 10 secondes pour fermer proprement
         ):
             print(f"🎮 Serveur Minecraft démarré sur ws://{self.host}:{self.port}")
             print(f"📦 Monde: {len(self.world.blocks)} blocs")
@@ -340,22 +343,30 @@ class MinecraftServer:
         try:
             async for message in websocket:
                 await self.handle_message(websocket, message)
-        except websockets.exceptions.ConnectionClosed:
-            print(f"❌ Client déconnecté: {websocket.remote_address}")
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"❌ Client déconnecté: {websocket.remote_address} (code: {e.code})")
+        except websockets.exceptions.InvalidMessage as e:
+            print(f"❌ Message invalide du client {websocket.remote_address}: {e}")
+        except Exception as e:
+            print(f"❌ Erreur avec le client {websocket.remote_address}: {e}")
         finally:
+            print(f"🧹 Nettoyage des ressources pour le client {websocket.remote_address}")
             self.clients.discard(websocket)
             # Nettoie les abonnements caméra
             for subscribers in self.camera_subscribers.values():
                 subscribers.discard(websocket)
             # Supprime le joueur du monde
             if websocket in self.player_positions:
-                self.world.remove_player(player_id)
-                del self.player_positions[websocket]
-                # Broadcast la déconnexion du joueur
-                await self.broadcast_to_all({
-                    "type": "player_left", 
-                    "player_id": player_id
-                })
+                try:
+                    self.world.remove_player(player_id)
+                    del self.player_positions[websocket]
+                    # Broadcast la déconnexion du joueur
+                    await self.broadcast_to_all({
+                        "type": "player_left", 
+                        "player_id": player_id
+                    })
+                except Exception as cleanup_error:
+                    print(f"⚠️  Erreur lors du nettoyage: {cleanup_error}")
     
     async def handle_message(self, websocket, message):
         """Route les messages"""
@@ -563,10 +574,13 @@ class MinecraftServer:
         message_str = json.dumps(message)
         disconnected = []
         
-        for client in self.clients:
+        for client in list(self.clients):  # Copie pour éviter les modifications pendant l'itération
             try:
                 await client.send(message_str)
-            except:
+            except websockets.exceptions.ConnectionClosed:
+                disconnected.append(client)
+            except Exception as e:
+                print(f"⚠️  Erreur lors de l'envoi à un client: {e}")
                 disconnected.append(client)
         
         # Nettoie les clients déconnectés
@@ -578,16 +592,17 @@ class MinecraftServer:
         message_str = json.dumps(message)
         disconnected = []
         
-        for client in self.clients:
+        for client in list(self.clients):  # Copie pour éviter les modifications pendant l'itération
             if client != sender_websocket:
                 try:
                     await client.send(message_str)
-                except:
+                except websockets.exceptions.ConnectionClosed:
+                    disconnected.append(client)
+                except Exception as e:
+                    print(f"⚠️  Erreur lors de l'envoi à un client: {e}")
                     disconnected.append(client)
         
         # Nettoie les clients déconnectés
-        for client in disconnected:
-            self.clients.discard(client)
         for client in disconnected:
             self.clients.discard(client)
     
