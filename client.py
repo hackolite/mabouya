@@ -311,13 +311,17 @@ class MinecraftWindow(pyglet.window.Window):
         x, y, z = camera["position"]
         
         vertices = cube_vertices(x, y, z, 0.6)
-        color = (255, 255, 0) * 24  # Jaune
+        color = (255, 0, 255) * 24  # Magenta vif pour plus de visibilité
+        
+        print(f"🎥 Ajout caméra visuelle {cam_id} à position ({x}, {y}, {z})")
         
         self._camera_cubes[cam_id] = self.camera_batch.add(
             24, GL_QUADS, None,
             ('v3f/static', vertices),
             ('c3B/static', color)
         )
+        
+        print(f"📐 Caméra ajoutée au batch, {len(self._camera_cubes)} caméras au total")
     
     def _update_player_cube(self):
         """Met à jour ou crée le cube du joueur"""
@@ -340,9 +344,16 @@ class MinecraftWindow(pyglet.window.Window):
     
     def on_camera_created(self, camera):
         """Callback caméra créée"""
+        print(f"📷 Callback on_camera_created appelé pour caméra {camera['id']}")
+        print(f"   Position: {camera['position']}")
+        print(f"   Nom: {camera['name']}")
+        
         self.cameras[camera["id"]] = camera
         self._add_camera_visual(camera)
         self.show_message(f"Caméra créée: {camera['name']}")
+        
+        print(f"📊 Total caméras stockées: {len(self.cameras)}")
+        print(f"📊 Total cubes caméra: {len(self._camera_cubes)}")
     
     def _add_other_player(self, player_id, position):
         """Ajoute un autre joueur au monde"""
@@ -644,7 +655,12 @@ class MinecraftWindow(pyglet.window.Window):
         self.set_3d()
         glColor3d(1, 1, 1)
         self.batch.draw()
+        
+        # Disable culling temporarily for camera rendering
+        glDisable(GL_CULL_FACE)
         self.camera_batch.draw()
+        glEnable(GL_CULL_FACE)
+        
         self.player_batch.draw()
         self.other_players_batch.draw()  # Dessine les autres joueurs
         
