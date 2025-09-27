@@ -306,22 +306,18 @@ class MinecraftWindow(pyglet.window.Window):
                 del self.shown[position]
     
     def _add_camera_visual(self, camera):
-        """Ajoute un cube jaune pour visualiser la caméra"""
+        """Ajoute un cube magenta pour visualiser la caméra"""
         cam_id = camera["id"]
         x, y, z = camera["position"]
         
         vertices = cube_vertices(x, y, z, 0.6)
         color = (255, 0, 255) * 24  # Magenta vif pour plus de visibilité
         
-        print(f"🎥 Ajout caméra visuelle {cam_id} à position ({x}, {y}, {z})")
-        
         self._camera_cubes[cam_id] = self.camera_batch.add(
             24, GL_QUADS, None,
             ('v3f/static', vertices),
             ('c3B/static', color)
         )
-        
-        print(f"📐 Caméra ajoutée au batch, {len(self._camera_cubes)} caméras au total")
     
     def _update_player_cube(self):
         """Met à jour ou crée le cube du joueur"""
@@ -344,16 +340,9 @@ class MinecraftWindow(pyglet.window.Window):
     
     def on_camera_created(self, camera):
         """Callback caméra créée"""
-        print(f"📷 Callback on_camera_created appelé pour caméra {camera['id']}")
-        print(f"   Position: {camera['position']}")
-        print(f"   Nom: {camera['name']}")
-        
         self.cameras[camera["id"]] = camera
         self._add_camera_visual(camera)
         self.show_message(f"Caméra créée: {camera['name']}")
-        
-        print(f"📊 Total caméras stockées: {len(self.cameras)}")
-        print(f"📊 Total cubes caméra: {len(self._camera_cubes)}")
     
     def _add_other_player(self, player_id, position):
         """Ajoute un autre joueur au monde"""
