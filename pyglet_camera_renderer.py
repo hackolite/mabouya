@@ -7,25 +7,52 @@ Renders camera views to offscreen framebuffers for streaming.
 """
 
 import os
-import pyglet
-from pyglet.gl import *
 import math
 import numpy as np
 
-# Set headless mode for Pyglet if needed
+# Set headless mode for Pyglet if needed (must be set before importing pyglet modules)
 if not os.environ.get('DISPLAY'):  
     os.environ['PYGLET_HEADLESS'] = '1'
+
+# Test Pyglet availability and compatibility early
+_PYGLET_AVAILABLE = False
+_PYGLET_ERROR = None
+
+try:
+    import pyglet
+    from pyglet.gl import *
+    # Test basic compatibility
+    display = pyglet.display.get_display()
+    screen = display.get_default_screen()
+    config = pyglet.gl.Config(double_buffer=False, depth_size=24)
+    context = screen.get_best_config(config).create_context(None)
+    # Test context functionality
+    context.set_current()
+    context.destroy()
+    _PYGLET_AVAILABLE = True
+except Exception as e:
+    _PYGLET_ERROR = str(e)
+    # Still import pyglet for API compatibility, but mark as unavailable
+    try:
+        import pyglet
+        from pyglet.gl import *
+    except:
+        pass
 
 class PygletCameraRenderer:
     """Renders camera views using Pyglet OpenGL offscreen rendering"""
     
     def __init__(self, resolution=(240, 180)):
+        # Check compatibility first
+        if not _PYGLET_AVAILABLE:
+            raise RuntimeError(f"Pyglet renderer not available in this environment: {_PYGLET_ERROR}")
+            
         self.resolution = resolution
         self.width, self.height = resolution
         
         try:
-            # Create display and window 
-            self.display = pyglet.canvas.Display()
+            # Create display and screen (updated for modern Pyglet API)
+            self.display = pyglet.display.get_display()
             self.screen = self.display.get_default_screen()
             
             # Create minimal config for offscreen rendering
@@ -49,43 +76,52 @@ class PygletCameraRenderer:
     
     def _setup_framebuffer(self):
         """Setup offscreen framebuffer for rendering"""
-        self.context.set_current()
+        try:
+            self.context.set_current()
+        except Exception as e:
+            raise RuntimeError(f"Failed to set OpenGL context current: {e}")
         
-        # Create framebuffer
-        self.framebuffer = GLuint()
-        glGenFramebuffers(1, self.framebuffer)
-        glBindFramebuffer(GL_FRAMEBUFFER, self.framebuffer)
-        
-        # Create color texture
-        self.color_texture = GLuint()
-        glGenTextures(1, self.color_texture)
-        glBindTexture(GL_TEXTURE_2D, self.color_texture)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, self.width, self.height, 0, GL_RGB, GL_UNSIGNED_BYTE, None)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.color_texture, 0)
-        
-        # Create depth buffer
-        self.depth_buffer = GLuint()
-        glGenRenderbuffers(1, self.depth_buffer)
-        glBindRenderbuffer(GL_RENDERBUFFER, self.depth_buffer)
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, self.width, self.height)
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_buffer)
-        
-        # Check framebuffer status
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
-        if status != GL_FRAMEBUFFER_COMPLETE:
-            raise RuntimeError(f"Framebuffer not complete: {status}")
-        
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        try:
+            # Create framebuffer
+            self.framebuffer = GLuint()
+            glGenFramebuffers(1, self.framebuffer)
+            glBindFramebuffer(GL_FRAMEBUFFER, self.framebuffer)
+            
+            # Create color texture
+            self.color_texture = GLuint()
+            glGenTextures(1, self.color_texture)
+            glBindTexture(GL_TEXTURE_2D, self.color_texture)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, self.width, self.height, 0, GL_RGB, GL_UNSIGNED_BYTE, None)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.color_texture, 0)
+            
+            # Create depth buffer
+            self.depth_buffer = GLuint()
+            glGenRenderbuffers(1, self.depth_buffer)
+            glBindRenderbuffer(GL_RENDERBUFFER, self.depth_buffer)
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, self.width, self.height)
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_buffer)
+            
+            # Check framebuffer status
+            status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+            if status != GL_FRAMEBUFFER_COMPLETE:
+                raise RuntimeError(f"Framebuffer not complete: {status}")
+            
+            glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        except Exception as e:
+            raise RuntimeError(f"Failed to setup framebuffer: {e}")
     
     def _setup_opengl(self):
         """Setup OpenGL state for rendering"""
-        self.context.set_current()
-        glClearColor(0.5, 0.69, 1.0, 1.0)  # Sky blue background
-        glEnable(GL_DEPTH_TEST)
-        glEnable(GL_CULL_FACE)
-        glCullFace(GL_BACK)
+        try:
+            self.context.set_current()
+            glClearColor(0.5, 0.69, 1.0, 1.0)  # Sky blue background
+            glEnable(GL_DEPTH_TEST)
+            glEnable(GL_CULL_FACE)
+            glCullFace(GL_BACK)
+        except Exception as e:
+            raise RuntimeError(f"Failed to setup OpenGL state: {e}")
     
     def _cube_vertices(self, x, y, z, size=1.0):
         """Generate vertices for a cube at position (x,y,z)"""
@@ -175,6 +211,12 @@ class PygletCameraRenderer:
         
         return pixel_array.tobytes()
     
+    def _gluPerspective(self, fovy, aspect, z_near, z_far):
+        """Manual implementation of gluPerspective since GLU might not be available in headless mode"""
+        fH = math.tan(math.radians(fovy) / 2.0) * z_near
+        fW = fH * aspect
+        glFrustum(-fW, fW, -fH, fH, z_near, z_far)
+
     def _setup_camera_matrix(self, position, rotation, fov):
         """Setup camera projection and view matrices"""
         cx, cy, cz = position
@@ -184,7 +226,7 @@ class PygletCameraRenderer:
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
         aspect = self.width / float(self.height)
-        gluPerspective(fov, aspect, 0.1, 60.0)
+        self._gluPerspective(fov, aspect, 0.1, 60.0)
         
         # Setup view matrix  
         glMatrixMode(GL_MODELVIEW)
