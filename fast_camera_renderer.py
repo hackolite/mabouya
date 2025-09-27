@@ -50,22 +50,35 @@ class FastCameraRenderer:
         return colors.get(block_type, [139, 69, 19])  # Default to dirt color
     
     def update_world(self, world_blocks):
-        """Update world block cache for fast rendering"""
+        """Update world block cache for fast rendering with spatial optimization"""
         if not world_blocks:
             self.block_positions = np.array([]).reshape(0, 3)
             self.block_colors = np.array([]).reshape(0, 3)
             return
         
-        # Convert world blocks to numpy arrays for faster processing
+        # Filter blocks that are too far away to improve performance
+        camera_range = 25  # Only consider blocks within this range
         positions = []
         colors = []
         
         for position, block in world_blocks.items():
-            positions.append(list(position))
-            colors.append(self._get_block_color_rgb(block.block_type))
+            x, y, z = position
+            # Simple distance check - only include nearby blocks
+            if abs(x) < camera_range and abs(y) < camera_range and abs(z) < camera_range:
+                positions.append(list(position))
+                colors.append(self._get_block_color_rgb(block.block_type))
+        
+        # If we still have too many blocks, subsample them
+        if len(positions) > 100:
+            # Take every nth block to reduce computational load
+            step = len(positions) // 100
+            positions = positions[::step]
+            colors = colors[::step]
         
         self.block_positions = np.array(positions, dtype=np.float32)
         self.block_colors = np.array(colors, dtype=np.uint8)
+        
+        print(f"FastRenderer: Using {len(self.block_positions)} blocks (filtered from {len(world_blocks)})")
     
     def render_camera_view(self, camera_position, camera_rotation, fov=70, frame_count=0):
         """Render camera view with optimized ray tracing"""
@@ -110,14 +123,22 @@ class FastCameraRenderer:
         return pixels.tobytes()
     
     def _render_python(self, width, height, cx, cy, cz, cos_yaw, sin_yaw, cos_pitch, sin_pitch, tan_half_fov, aspect):
-        """Python fallback rendering implementation"""
+        """Python fallback rendering implementation with optimizations"""
         pixels = np.zeros((height, width, 3), dtype=np.uint8)
         
-        for py in range(height):
-            for px in range(width):
+        # Render at lower resolution for performance, then upscale if needed
+        render_scale = 1
+        if width > 200 or height > 150:
+            render_scale = 2
+        
+        render_width = width // render_scale
+        render_height = height // render_scale
+        
+        for py in range(render_height):
+            for px in range(render_width):
                 # Calculate ray direction
-                screen_x = (2.0 * px / width - 1.0) * aspect
-                screen_y = 1.0 - 2.0 * py / height
+                screen_x = (2.0 * (px * render_scale) / width - 1.0) * aspect
+                screen_y = 1.0 - 2.0 * (py * render_scale) / height
                 
                 ray_x = screen_x * tan_half_fov
                 ray_y = screen_y * tan_half_fov
@@ -143,13 +164,20 @@ class FastCameraRenderer:
                 
                 # Simplified ray marching
                 color = self._fast_ray_march(cx, cy, cz, ray_x, ray_y, ray_z)
-                pixels[py, px] = color
+                
+                # Set pixel(s) based on render scale
+                for dy in range(render_scale):
+                    for dx in range(render_scale):
+                        py_target = py * render_scale + dy
+                        px_target = px * render_scale + dx
+                        if py_target < height and px_target < width:
+                            pixels[py_target, px_target] = color
         
         return pixels
     
     def _fast_ray_march(self, ox, oy, oz, dx, dy, dz, max_dist=20):
-        """Fast ray marching with fewer iterations"""
-        step = 1.5  # Larger step size for better performance
+        """Fast ray marching with fewer iterations and optimized collision detection"""
+        step = 2.0  # Even larger step size for better performance
         max_iterations = int(max_dist / step)
         
         if self.block_positions is None or len(self.block_positions) == 0:
@@ -159,18 +187,31 @@ class FastCameraRenderer:
             else:
                 return [100, 149, 237]  # Darker blue
         
+        # Use only subset of iterations for real-time performance
+        max_iterations = min(max_iterations, 8)  # Cap iterations for performance
+        
         for i in range(max_iterations):
             # Current position on ray
             x = ox + dx * i * step
             y = oy + dy * i * step
             z = oz + dz * i * step
             
-            # Check collision with blocks (vectorized distance check)
-            distances = np.sum((self.block_positions - [x, y, z])**2, axis=1)
-            hit_idx = np.argmin(distances)
+            # Use manhattan distance first (faster than euclidean)
+            manhattan_distances = np.abs(self.block_positions[:, 0] - x) + \
+                                np.abs(self.block_positions[:, 1] - y) + \
+                                np.abs(self.block_positions[:, 2] - z)
             
-            if distances[hit_idx] < 1.0:  # Hit threshold
-                return self.block_colors[hit_idx]
+            # Only check euclidean distance for nearby blocks
+            nearby_mask = manhattan_distances < 2.0
+            if np.any(nearby_mask):
+                nearby_positions = self.block_positions[nearby_mask]
+                nearby_colors = self.block_colors[nearby_mask]
+                
+                distances_sq = np.sum((nearby_positions - [x, y, z])**2, axis=1)
+                hit_idx = np.argmin(distances_sq)
+                
+                if distances_sq[hit_idx] < 1.5:  # Increased hit threshold for performance
+                    return nearby_colors[hit_idx]
         
         # Sky color gradient if no hit
         if dy > 0:

@@ -23,7 +23,14 @@ from typing import Dict, Set
 from datetime import datetime
 import struct
 
-# Import the new fast camera renderer
+# Import renderers in order of preference (fastest first)
+try:
+    from ultra_fast_renderer import UltraFastRenderer
+    HAS_ULTRA_FAST_RENDERER = True
+except ImportError as e:
+    HAS_ULTRA_FAST_RENDERER = False
+    print(f"⚠️ Ultra fast camera renderer not available: {e}")
+
 try:
     from fast_camera_renderer import FastCameraRenderer
     HAS_FAST_RENDERER = True
@@ -110,18 +117,26 @@ class CubeCamera(Cube):
         self.fov = 70
         self.resolution = resolution  # Résolution par défaut 240x180 pour balance qualité/performance
         
-        # Initialize fast renderer if available, then try Pyglet, otherwise use ray tracing
+        # Initialize renderers in order of preference (fastest first)
+        self.ultra_fast_renderer = None
         self.fast_renderer = None
         self.pyglet_renderer = None
         
-        if HAS_FAST_RENDERER:
+        if HAS_ULTRA_FAST_RENDERER:
+            try:
+                self.ultra_fast_renderer = UltraFastRenderer(resolution)
+                print(f"✅ Caméra {self.name} initialized with ultra-fast renderer")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize ultra-fast renderer for camera {self.name}: {e}")
+                
+        if not self.ultra_fast_renderer and HAS_FAST_RENDERER:
             try:
                 self.fast_renderer = FastCameraRenderer(resolution)
                 print(f"✅ Caméra {self.name} initialized with fast optimized renderer")
             except Exception as e:
                 print(f"⚠️ Failed to initialize fast renderer for camera {self.name}: {e}")
                 
-        if not self.fast_renderer:
+        if not self.ultra_fast_renderer and not self.fast_renderer:
             # Try to import Pyglet renderer at runtime
             try:
                 from pyglet_camera_renderer import PygletCameraRenderer
@@ -131,7 +146,7 @@ class CubeCamera(Cube):
                 print(f"⚠️ Failed to initialize Pyglet renderer for camera {self.name}: {e}")
                 self.pyglet_renderer = None
         
-        if not self.fast_renderer and not self.pyglet_renderer:
+        if not self.ultra_fast_renderer and not self.fast_renderer and not self.pyglet_renderer:
             print(f"⚠️ Caméra {self.name} will use fallback ray tracing renderer")
         
         self._world_cache_hash = None  # Cache world state to avoid rebuilding geometry every frame
@@ -146,10 +161,36 @@ class CubeCamera(Cube):
         return self.move_to(new_position)
     
     def render_view(self, world, frame_count=0):
-        """Génère une vue de la caméra en regardant réellement le monde (optimisé)"""
+        """Génère une vue de la caméra en regardant réellement le monde (ultra-optimisé)"""
         width, height = self.resolution
         
-        # Use fast renderer if available
+        # Use ultra-fast renderer if available
+        if self.ultra_fast_renderer:
+            try:
+                # Check if world has changed and update renderer geometry
+                world_blocks = world.get_all_blocks()
+                world_hash = hash(frozenset((pos, block.block_type) for pos, block in world_blocks.items()))
+                
+                if world_hash != self._world_cache_hash:
+                    self.ultra_fast_renderer.update_world(world_blocks, self.position)
+                    self._world_cache_hash = world_hash
+                
+                # Render camera view with ultra-fast renderer
+                pixel_data = self.ultra_fast_renderer.render_camera_view(
+                    self.position, 
+                    self.rotation, 
+                    self.fov,
+                    frame_count
+                )
+                
+                return pixel_data
+                
+            except Exception as e:
+                print(f"⚠️ Ultra-fast renderer failed for camera {self.name}: {e}")
+                print("🔄 Falling back to fast renderer...")
+                # Fall through to try fast renderer
+        
+        # Use fast renderer if available and ultra-fast renderer failed
         if self.fast_renderer:
             try:
                 # Check if world has changed and update renderer geometry
@@ -175,7 +216,7 @@ class CubeCamera(Cube):
                 print("🔄 Falling back to Pyglet renderer...")
                 # Fall through to try Pyglet renderer
         
-        # Use Pyglet renderer if available and fast renderer failed
+        # Use Pyglet renderer if available and other renderers failed
         if self.pyglet_renderer:
             try:
                 # Check if world has changed and update renderer geometry
