@@ -219,7 +219,8 @@ class CameraViewer:
                     if self.headless:
                         # Mode sans affichage - juste les stats
                         if self.frame_count == 1:
-                            print(f"📺 Première frame reçue (taille: {data['width']}x{data['height']})")
+                            renderer_type = data.get("renderer", "Unknown")
+                            print(f"📺 Première frame reçue (taille: {data['width']}x{data['height']}, renderer: {renderer_type})")
                         elif self.frame_count % 10 == 0:
                             print(f"📊 {self.frame_count} frames reçues")
                         
@@ -275,6 +276,18 @@ class CameraViewer:
                                     cv2.FONT_HERSHEY_SIMPLEX,
                                     0.5,
                                     (255, 255, 255),
+                                    1
+                                )
+                                
+                                # Affiche le type de rendu actif
+                                renderer_type = data.get("renderer", "Unknown")
+                                cv2.putText(
+                                    frame_bgr,
+                                    f"Renderer: {renderer_type}",
+                                    (10, 90),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.5,
+                                    (0, 255, 255),  # Jaune cyan pour se distinguer
                                     1
                                 )
                                 

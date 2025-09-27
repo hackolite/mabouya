@@ -160,6 +160,17 @@ class CubeCamera(Cube):
         """Déplace la caméra (wrapper spécialisé)"""
         return self.move_to(new_position)
     
+    def get_active_renderer_type(self):
+        """Retourne le type de rendu actuellement actif"""
+        if self.ultra_fast_renderer:
+            return "Ultra-Fast Renderer"
+        elif self.fast_renderer:
+            return "Fast Optimized Renderer"
+        elif self.pyglet_renderer:
+            return "Pyglet Renderer"
+        else:
+            return "Original Ray Tracing"
+    
     def render_view(self, world, frame_count=0):
         """Génère une vue de la caméra en regardant réellement le monde (ultra-optimisé)"""
         width, height = self.resolution
@@ -1223,6 +1234,7 @@ class MinecraftServer:
                     "height": camera.resolution[1],
                     "frame": frame_b64,
                     "format": "jpeg",  # Indique le format de compression
+                    "renderer": camera.get_active_renderer_type(),  # Type de rendu actif
                     "timestamp": datetime.now().isoformat()
                 })
                 
