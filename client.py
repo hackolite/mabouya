@@ -26,6 +26,7 @@ Usage:
 
 import pyglet
 from pyglet.gl import *
+from pyglet.gl import gluPerspective
 from pyglet.window import key, mouse
 import math
 import asyncio
@@ -54,6 +55,39 @@ def cube_vertices(x, y, z, n):
         x-n,y-n,z+n, x+n,y-n,z+n, x+n,y+n,z+n, x-n,y+n,z+n,
         x+n,y-n,z-n, x-n,y-n,z-n, x-n,y+n,z-n, x+n,y+n,z-n,
     ]
+
+def cube_edges(x, y, z, n):
+    """Génère les arêtes d'un cube pour le wireframe"""
+    # Les 8 sommets du cube
+    vertices = [
+        (x-n, y-n, z-n),  # 0: arrière-bas-gauche
+        (x+n, y-n, z-n),  # 1: arrière-bas-droite  
+        (x+n, y+n, z-n),  # 2: arrière-haut-droite
+        (x-n, y+n, z-n),  # 3: arrière-haut-gauche
+        (x-n, y-n, z+n),  # 4: avant-bas-gauche
+        (x+n, y-n, z+n),  # 5: avant-bas-droite
+        (x+n, y+n, z+n),  # 6: avant-haut-droite
+        (x-n, y+n, z+n),  # 7: avant-haut-gauche
+    ]
+    
+    # Les 12 arêtes du cube (connexions entre les sommets)
+    edges = [
+        # Face arrière (z-n)
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        # Face avant (z+n)  
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        # Connexions avant-arrière
+        (0, 4), (1, 5), (2, 6), (3, 7)
+    ]
+    
+    # Convertit en liste de coordonnées pour GL_LINES
+    lines = []
+    for start_idx, end_idx in edges:
+        start = vertices[start_idx]
+        end = vertices[end_idx]
+        lines.extend([start[0], start[1], start[2], end[0], end[1], end[2]])
+    
+    return lines
 
 def normalize(position):
     """Normalise position vers coordonnées bloc"""
@@ -171,17 +205,23 @@ class MinecraftWindow(pyglet.window.Window):
         self.batch = pyglet.graphics.Batch()
         self._shown = {}
         
+        # Wireframes pour tous les cubes (contours noirs épais)
+        self.wireframe_batch = pyglet.graphics.Batch()
+        self._wireframes = {}  # Stocke les wireframes des blocs
+        
         # Caméras (rendues comme cubes jaunes)
         self.cameras = {}
         self.camera_batch = pyglet.graphics.Batch()
         self._camera_cubes = {}
+        self._camera_wireframes = {}  # Wireframes des caméras
         
         # Player cube (rendu comme cube bleu)
         self.player_batch = pyglet.graphics.Batch()
         self.player_cube = None
+        self.player_wireframe = None  # Wireframe du joueur
         
         # Other players (rendered as colored cubes)
-        self.other_players = {}  # {player_id: {"position": (x, y, z), "cube": cube_object}}
+        self.other_players = {}  # {player_id: {"position": (x, y, z), "cube": cube_object, "wireframe": wireframe_object}}
         self.other_players_batch = pyglet.graphics.Batch()
         
         # Réseau
@@ -273,11 +313,24 @@ class MinecraftWindow(pyglet.window.Window):
         else:
             color = (139, 69, 19) * 24
         
+        # Ajoute le cube solide
         self._shown[position] = self.batch.add(
             24, GL_QUADS, None,
             ('v3f/static', vertices),
             ('c3B/static', color)
         )
+        
+        # Ajoute le wireframe noir épais
+        edges = cube_edges(x, y, z, 0.5)
+        edge_count = len(edges) // 3  # 3 coordonnées par vertex
+        black_color = (0, 0, 0) * edge_count  # Noir pour toutes les arêtes
+        
+        self._wireframes[position] = self.wireframe_batch.add(
+            edge_count, GL_LINES, None,
+            ('v3f/static', edges),
+            ('c3B/static', black_color)
+        )
+        
         self.shown[position] = block_type
     
     def remove_block(self, position):
@@ -302,6 +355,9 @@ class MinecraftWindow(pyglet.window.Window):
             if position in self._shown:
                 self._shown[position].delete()
                 del self._shown[position]
+            if position in self._wireframes:
+                self._wireframes[position].delete()
+                del self._wireframes[position]
             if position in self.shown:
                 del self.shown[position]
     
@@ -313,10 +369,22 @@ class MinecraftWindow(pyglet.window.Window):
         vertices = cube_vertices(x, y, z, 0.6)
         color = (255, 255, 0) * 24  # Jaune
         
+        # Ajoute le cube de caméra
         self._camera_cubes[cam_id] = self.camera_batch.add(
             24, GL_QUADS, None,
             ('v3f/static', vertices),
             ('c3B/static', color)
+        )
+        
+        # Ajoute le wireframe noir épais
+        edges = cube_edges(x, y, z, 0.6)
+        edge_count = len(edges) // 3
+        black_color = (0, 0, 0) * edge_count
+        
+        self._camera_wireframes[cam_id] = self.wireframe_batch.add(
+            edge_count, GL_LINES, None,
+            ('v3f/static', edges),
+            ('c3B/static', black_color)
         )
     
     def _update_player_cube(self):
@@ -324,6 +392,8 @@ class MinecraftWindow(pyglet.window.Window):
         # Supprime l'ancien cube s'il existe
         if self.player_cube:
             self.player_cube.delete()
+        if self.player_wireframe:
+            self.player_wireframe.delete()
         
         # Position du joueur
         x, y, z = self.position
@@ -336,6 +406,17 @@ class MinecraftWindow(pyglet.window.Window):
             24, GL_QUADS, None,
             ('v3f/static', vertices),
             ('c3B/static', color)
+        )
+        
+        # Ajoute le wireframe noir épais
+        edges = cube_edges(x, y - 1, z, 0.4)
+        edge_count = len(edges) // 3
+        black_color = (0, 0, 0) * edge_count
+        
+        self.player_wireframe = self.wireframe_batch.add(
+            edge_count, GL_LINES, None,
+            ('v3f/static', edges),
+            ('c3B/static', black_color)
         )
     
     def on_camera_created(self, camera):
@@ -356,21 +437,36 @@ class MinecraftWindow(pyglet.window.Window):
             ('c3B/static', color)
         )
         
-        self.other_players[player_id] = {"position": position, "cube": cube}
+        # Ajoute le wireframe noir épais
+        edges = cube_edges(x, y - 1, z, 0.4)
+        edge_count = len(edges) // 3
+        black_color = (0, 0, 0) * edge_count
+        
+        wireframe = self.wireframe_batch.add(
+            edge_count, GL_LINES, None,
+            ('v3f/static', edges),
+            ('c3B/static', black_color)
+        )
+        
+        self.other_players[player_id] = {"position": position, "cube": cube, "wireframe": wireframe}
         print(f"👤 Joueur {player_id} ajouté à {position}")
     
     def _remove_other_player(self, player_id):
         """Supprime un autre joueur du monde"""
         if player_id in self.other_players:
             self.other_players[player_id]["cube"].delete()
+            if "wireframe" in self.other_players[player_id]:
+                self.other_players[player_id]["wireframe"].delete()
             del self.other_players[player_id]
             print(f"👤 Joueur {player_id} supprimé")
     
     def _update_other_player_position(self, player_id, new_position):
         """Met à jour la position d'un autre joueur"""
         if player_id in self.other_players:
-            # Supprime l'ancien cube
+            # Supprime l'ancien cube et wireframe
             self.other_players[player_id]["cube"].delete()
+            if "wireframe" in self.other_players[player_id]:
+                self.other_players[player_id]["wireframe"].delete()
             
             # Crée un nouveau cube à la nouvelle position
             x, y, z = new_position
@@ -383,7 +479,18 @@ class MinecraftWindow(pyglet.window.Window):
                 ('c3B/static', color)
             )
             
-            self.other_players[player_id] = {"position": new_position, "cube": cube}
+            # Ajoute le nouveau wireframe
+            edges = cube_edges(x, y - 1, z, 0.4)
+            edge_count = len(edges) // 3
+            black_color = (0, 0, 0) * edge_count
+            
+            wireframe = self.wireframe_batch.add(
+                edge_count, GL_LINES, None,
+                ('v3f/static', edges),
+                ('c3B/static', black_color)
+            )
+            
+            self.other_players[player_id] = {"position": new_position, "cube": cube, "wireframe": wireframe}
     
     def show_message(self, text, duration=3.0):
         """Affiche un message temporaire"""
@@ -643,10 +750,18 @@ class MinecraftWindow(pyglet.window.Window):
         # 3D
         self.set_3d()
         glColor3d(1, 1, 1)
+        
+        # Dessine les cubes solides
         self.batch.draw()
         self.camera_batch.draw()
         self.player_batch.draw()
         self.other_players_batch.draw()  # Dessine les autres joueurs
+        
+        # Dessine les wireframes avec des lignes épaisses noires
+        glLineWidth(2.0)  # Lignes épaisses
+        glColor3d(0, 0, 0)  # Noir
+        self.wireframe_batch.draw()
+        glLineWidth(1.0)  # Restore default line width
         
         # 2D
         self.set_2d()
