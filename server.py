@@ -24,33 +24,89 @@ from datetime import datetime
 import struct
 
 class Cube:
-    """Cube de base"""
-    def __init__(self, position, block_type="grass"):
+    """Cube de base - classe centrale dont héritent tous les autres cubes"""
+    def __init__(self, position, block_type="grass", texture=None, size=(1, 1, 1), 
+                 has_camera=False, is_moveable=False, is_traversable=False):
         self.position = tuple(position)
         self.block_type = block_type
-        self.id = f"cube_{position[0]}_{position[1]}_{position[2]}"
+        self.texture = texture or block_type  # Texture par défaut basée sur le type
+        self.size = size  # Taille du cube (x, y, z)
+        self.has_camera = has_camera
+        self.is_moveable = is_moveable
+        self.is_traversable = is_traversable
+        self.id = f"cube_{position[0]}_{position[1]}_{position[2]}_{block_type}"
+        
+    def move_to(self, new_position):
+        """Déplace le cube vers une nouvelle position"""
+        if self.is_moveable:
+            old_position = self.position
+            self.position = tuple(new_position)
+            # Mise à jour de l'ID pour refléter la nouvelle position
+            self.id = f"cube_{new_position[0]}_{new_position[1]}_{new_position[2]}_{self.block_type}"
+            return True
+        return False
+    
+    def can_collide_with(self, other_cube):
+        """Vérifie si ce cube peut entrer en collision avec un autre"""
+        if self.is_traversable or (hasattr(other_cube, 'is_traversable') and other_cube.is_traversable):
+            return False
+        
+        # Vérification basique de collision basée sur la position
+        x1, y1, z1 = self.position
+        x2, y2, z2 = other_cube.position
+        sx1, sy1, sz1 = self.size
+        sx2, sy2, sz2 = getattr(other_cube, 'size', (1, 1, 1))
+        
+        # Collision AABB (Axis-Aligned Bounding Box)
+        return (abs(x1 - x2) < (sx1 + sx2) / 2 and
+                abs(y1 - y2) < (sy1 + sy2) / 2 and
+                abs(z1 - z2) < (sz1 + sz2) / 2)
+    
+    def to_dict(self):
+        """Sérialise le cube"""
+        return {
+            "id": self.id,
+            "position": self.position,
+            "block_type": self.block_type,
+            "texture": self.texture,
+            "size": self.size,
+            "has_camera": self.has_camera,
+            "is_moveable": self.is_moveable,
+            "is_traversable": self.is_traversable
+        }
 
 class Player(Cube):
     """Cube représentant un joueur"""
     def __init__(self, position, player_id, name="Player"):
-        super().__init__(position, "player")
+        super().__init__(position, "player", texture="player", size=(0.8, 1.8, 0.8), 
+                        has_camera=False, is_moveable=True, is_traversable=False)
         self.player_id = player_id
         self.name = name
         self.id = f"player_{player_id}"
     
     def update_position(self, new_position):
         """Met à jour la position du joueur"""
-        self.position = tuple(new_position)
+        return self.move_to(new_position)
 
-class CubeCamera:
+class CubeCamera(Cube):
     """Cube avec caméra intégrée"""
     def __init__(self, position, name="Camera", resolution=(240, 180)):
+        super().__init__(position, "camera", texture="camera", size=(1, 1, 1),
+                        has_camera=True, is_moveable=True, is_traversable=False)
         self.id = f"cam_{datetime.now().timestamp()}"
-        self.position = list(position)
         self.name = name
         self.rotation = [0, 0]  # yaw, pitch
         self.fov = 70
-        self.resolution = resolution  # Résolution par défaut 320x240 pour balance qualité/performance
+        self.resolution = resolution  # Résolution par défaut 240x180 pour balance qualité/performance
+        
+    def rotate(self, yaw_delta, pitch_delta):
+        """Rotation de la caméra"""
+        self.rotation[0] += yaw_delta
+        self.rotation[1] = max(-90, min(90, self.rotation[1] + pitch_delta))
+    
+    def move_camera(self, new_position):
+        """Déplace la caméra (wrapper spécialisé)"""
+        return self.move_to(new_position)
         
     def rotate(self, yaw_delta, pitch_delta):
         """Rotation de la caméra"""
@@ -184,8 +240,12 @@ class CubeCamera:
                     return [128, 128, 128]  # Gris
                 elif block.block_type == "player":
                     return [0, 150, 255]  # Bleu pour les joueurs
+                elif block.block_type == "camera":
+                    return [255, 255, 0]  # Jaune pour les caméras
+                elif block.block_type == "ai_agent":
+                    return [255, 0, 255]  # Magenta pour les agents IA
                 else:
-                    return [139, 69, 19]  # Marron (terre)
+                    return [139, 69, 19]  # Marron (terre par défaut)
         
         # Couleur du ciel si rien n'est touché
         # Gradient ciel simple
@@ -195,22 +255,78 @@ class CubeCamera:
             return [100, 149, 237]  # Bleu plus foncé vers le bas
     
     def to_dict(self):
-        return {
-            "id": self.id,
+        """Sérialise le cube caméra avec informations supplémentaires"""
+        base_dict = super().to_dict()
+        base_dict.update({
             "name": self.name,
-            "position": self.position,
             "rotation": self.rotation,
             "fov": self.fov,
             "resolution": self.resolution
+        })
+        return base_dict
+
+class CubeAI(Cube):
+    """Cube avec intelligence artificielle"""
+    def __init__(self, position, name="AI_Agent", ai_type="basic"):
+        super().__init__(position, "ai_agent", texture="ai_agent", size=(1, 1, 1),
+                        has_camera=False, is_moveable=True, is_traversable=False)
+        self.id = f"ai_{datetime.now().timestamp()}"
+        self.name = name
+        self.ai_type = ai_type  # basic, advanced, neural_network, etc.
+        self.behavior_state = "idle"  # idle, moving, observing, interacting
+        self.target_position = None
+        self.memory = {}  # Pour stocker des informations contextuelles
+        self.sensors = []  # Liste des capteurs disponibles
+        
+    def set_behavior_state(self, state):
+        """Change l'état de comportement de l'agent IA"""
+        valid_states = ["idle", "moving", "observing", "interacting", "learning"]
+        if state in valid_states:
+            self.behavior_state = state
+            return True
+        return False
+    
+    def set_target(self, target_position):
+        """Définit une position cible pour l'agent IA"""
+        self.target_position = tuple(target_position)
+        self.set_behavior_state("moving")
+    
+    def add_sensor(self, sensor_type, sensor_config=None):
+        """Ajoute un capteur à l'agent IA"""
+        sensor = {
+            "type": sensor_type,
+            "config": sensor_config or {},
+            "active": True
         }
+        self.sensors.append(sensor)
+        return len(self.sensors) - 1  # Retourne l'index du capteur
+    
+    def update_memory(self, key, value):
+        """Met à jour la mémoire de l'agent IA"""
+        self.memory[key] = value
+    
+    def to_dict(self):
+        """Sérialise le cube IA avec informations supplémentaires"""
+        base_dict = super().to_dict()
+        base_dict.update({
+            "name": self.name,
+            "ai_type": self.ai_type,
+            "behavior_state": self.behavior_state,
+            "target_position": self.target_position,
+            "sensors": self.sensors,
+            "memory_keys": list(self.memory.keys())  # Ne sérialise que les clés pour la confidentialité
+        })
+        return base_dict
 
 class World:
     """Monde Minecraft"""
     def __init__(self, size=20):
         self.size = size
-        self.blocks = {}
-        self.cameras = {}
-        self.players = {}  # {player_id: Player} to track players as blocks
+        self.blocks = {}  # Cubes standard du terrain
+        self.cameras = {}  # Cubes caméra
+        self.ai_agents = {}  # Cubes IA
+        self.players = {}  # Cubes joueurs
+        self.special_cubes = {}  # Autres cubes spéciaux
         self.generate_world()
     
     def generate_world(self):
@@ -243,8 +359,18 @@ class World:
         """Récupère une caméra"""
         return self.cameras.get(camera_id)
     
+    def add_ai_agent(self, position, name="AI_Agent", ai_type="basic"):
+        """Ajoute un agent IA au monde"""
+        ai_agent = CubeAI(position, name, ai_type)
+        self.ai_agents[ai_agent.id] = ai_agent
+        return ai_agent
+    
+    def get_ai_agent(self, ai_id):
+        """Récupère un agent IA"""
+        return self.ai_agents.get(ai_id)
+    
     def add_player(self, player_id, position, name="Player"):
-        """Ajoute un joueur au monde comme un bloc"""
+        """Ajoute un joueur au monde comme un cube"""
         player = Player(position, player_id, name)
         self.players[player_id] = player
         return player
@@ -252,8 +378,7 @@ class World:
     def update_player_position(self, player_id, new_position):
         """Met à jour la position d'un joueur"""
         if player_id in self.players:
-            self.players[player_id].update_position(new_position)
-            return True
+            return self.players[player_id].update_position(new_position)
         return False
     
     def remove_player(self, player_id):
@@ -263,17 +388,65 @@ class World:
             return True
         return False
     
+    def move_cube(self, cube_id, new_position):
+        """Déplace un cube spécifique"""
+        # Cherche dans toutes les collections de cubes
+        all_collections = [self.cameras, self.ai_agents, self.players, self.special_cubes]
+        
+        for collection in all_collections:
+            if cube_id in collection:
+                cube = collection[cube_id]
+                if hasattr(cube, 'move_to'):
+                    return cube.move_to(new_position)
+                break
+        return False
+    
+    def remove_cube(self, cube_id):
+        """Supprime un cube du monde"""
+        # Cherche dans toutes les collections
+        all_collections = [
+            (self.cameras, "camera"),
+            (self.ai_agents, "ai_agent"), 
+            (self.players, "player"),
+            (self.special_cubes, "special")
+        ]
+        
+        for collection, cube_type in all_collections:
+            if cube_id in collection:
+                del collection[cube_id]
+                return True
+        
+        # Cherche dans les blocs standard par position
+        for pos, cube in list(self.blocks.items()):
+            if cube.id == cube_id and cube.is_moveable:
+                del self.blocks[pos]
+                return True
+        
+        return False
+    
     def get_all_blocks(self):
-        """Retourne tous les blocs (réguliers + joueurs) pour le ray-marching"""
+        """Retourne tous les blocs (réguliers + tous types de cubes) pour le ray-marching"""
         all_blocks = dict(self.blocks)
-        # Ajoute les joueurs comme des blocs en utilisant leurs coordonnées entières
-        for player in self.players.values():
-            # Convertit la position flottante du joueur en coordonnées de bloc
-            floored_pos = (int(math.floor(player.position[0])), 
-                          int(math.floor(player.position[1])), 
-                          int(math.floor(player.position[2])))
-            all_blocks[floored_pos] = player
+        
+        # Ajoute tous les types de cubes
+        for collection in [self.cameras, self.ai_agents, self.players, self.special_cubes]:
+            for cube in collection.values():
+                # Convertit la position en coordonnées de bloc
+                floored_pos = (int(math.floor(cube.position[0])), 
+                              int(math.floor(cube.position[1])), 
+                              int(math.floor(cube.position[2])))
+                all_blocks[floored_pos] = cube
+        
         return all_blocks
+    
+    def check_collision(self, cube, new_position):
+        """Vérifie les collisions pour un cube à une nouvelle position"""
+        # Pour simplifier, nous désactivons la collision pour les cubes spéciaux mobiles
+        # Dans une implémentation plus avancée, on utiliserait une détection de collision appropriée
+        if hasattr(cube, 'is_moveable') and cube.is_moveable:
+            return False  # Pas de collision pour les cubes mobiles
+        
+        return False  # Pas de collision par défaut
     
     def to_dict(self):
         """Sérialise le monde"""
@@ -282,16 +455,24 @@ class World:
             key = f"{pos[0]},{pos[1]},{pos[2]}"
             blocks_data[key] = cube.block_type
         
-        # Ajoute les joueurs comme des blocs
-        for player in self.players.values():
-            key = f"{player.position[0]},{player.position[1]},{player.position[2]}"
-            blocks_data[key] = player.block_type
+        # Ajoute tous les types de cubes spéciaux
+        all_special_cubes = []
+        all_special_cubes.extend(self.players.values())
+        all_special_cubes.extend(self.cameras.values())
+        all_special_cubes.extend(self.ai_agents.values())
+        all_special_cubes.extend(self.special_cubes.values())
+        
+        for cube in all_special_cubes:
+            key = f"{cube.position[0]},{cube.position[1]},{cube.position[2]}"
+            blocks_data[key] = cube.block_type
         
         return {
             "size": self.size,
             "blocks": blocks_data,
             "cameras": {cid: cam.to_dict() for cid, cam in self.cameras.items()},
-            "players": {pid: {"position": list(p.position), "name": p.name} for pid, p in self.players.items()}
+            "ai_agents": {aid: ai.to_dict() for aid, ai in self.ai_agents.items()},
+            "players": {pid: {"position": list(p.position), "name": p.name} for pid, p in self.players.items()},
+            "special_cubes": {sid: sc.to_dict() for sid, sc in self.special_cubes.items()}
         }
 
 class MinecraftServer:
@@ -382,6 +563,18 @@ class MinecraftServer:
                 await self.handle_control_camera(websocket, data)
             elif msg_type == "get_cameras":
                 await self.handle_get_cameras(websocket)
+            elif msg_type == "create_ai_agent":
+                await self.handle_create_ai_agent(websocket, data)
+            elif msg_type == "control_ai_agent":
+                await self.handle_control_ai_agent(websocket, data)
+            elif msg_type == "get_ai_agents":
+                await self.handle_get_ai_agents(websocket)
+            elif msg_type == "move_cube":
+                await self.handle_move_cube(websocket, data)
+            elif msg_type == "remove_cube":
+                await self.handle_remove_cube(websocket, data)
+            elif msg_type == "get_cube_info":
+                await self.handle_get_cube_info(websocket, data)
             elif msg_type == "place_block":
                 await self.handle_place_block(websocket, data)
             elif msg_type == "destroy_block":
@@ -389,7 +582,7 @@ class MinecraftServer:
             elif msg_type == "player_position_update":
                 await self.handle_player_position_update(websocket, data)
             elif msg_type == "get_player_positions":
-                await self.handle_get_player_positions(websocket)
+                await self.handle_get_player_positions(websocket, data)
             else:
                 await websocket.send(json.dumps({
                     "type": "error",
@@ -568,6 +761,211 @@ class MinecraftServer:
         }))
         
         print(f"📊 Envoyé positions de {len(positions)} joueurs à {websocket.remote_address}")
+    
+    async def handle_create_ai_agent(self, websocket, data):
+        """Crée un nouvel agent IA"""
+        position = data.get("position", [0, 1, 0])
+        name = data.get("name", "AI_Agent")
+        ai_type = data.get("ai_type", "basic")
+        
+        try:
+            ai_agent = self.world.add_ai_agent(position, name, ai_type)
+            
+            await websocket.send(json.dumps({
+                "type": "ai_agent_created",
+                "ai_agent": ai_agent.to_dict()
+            }))
+            
+            # Broadcast aux autres clients
+            await self.broadcast_to_others(websocket, {
+                "type": "ai_agent_added",
+                "ai_agent": ai_agent.to_dict()
+            })
+            
+            print(f"🤖 Agent IA créé: {name} à {position}")
+            
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur création agent IA: {str(e)}"
+            }))
+    
+    async def handle_control_ai_agent(self, websocket, data):
+        """Contrôle un agent IA"""
+        ai_id = data.get("ai_id")
+        command = data.get("command")
+        
+        ai_agent = self.world.get_ai_agent(ai_id)
+        if not ai_agent:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Agent IA introuvable"
+            }))
+            return
+        
+        try:
+            if command == "move":
+                new_position = data.get("position")
+                if new_position:
+                    success = ai_agent.move_to(new_position)
+                    if success:
+                        await self.broadcast_to_all({
+                            "type": "ai_agent_moved",
+                            "ai_id": ai_id,
+                            "position": new_position
+                        })
+            elif command == "set_behavior":
+                behavior = data.get("behavior")
+                success = ai_agent.set_behavior_state(behavior)
+                if success:
+                    await self.broadcast_to_all({
+                        "type": "ai_agent_behavior_changed",
+                        "ai_id": ai_id,
+                        "behavior": behavior
+                    })
+            elif command == "set_target":
+                target = data.get("target_position")
+                ai_agent.set_target(target)
+                await self.broadcast_to_all({
+                    "type": "ai_agent_target_set",
+                    "ai_id": ai_id,
+                    "target": target
+                })
+            
+            await websocket.send(json.dumps({
+                "type": "ai_agent_controlled",
+                "ai_id": ai_id,
+                "command": command,
+                "success": True
+            }))
+            
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur contrôle agent IA: {str(e)}"
+            }))
+    
+    async def handle_get_ai_agents(self, websocket):
+        """Renvoie la liste des agents IA"""
+        agents = {aid: agent.to_dict() for aid, agent in self.world.ai_agents.items()}
+        
+        await websocket.send(json.dumps({
+            "type": "ai_agents_list",
+            "ai_agents": agents,
+            "count": len(agents)
+        }))
+    
+    async def handle_move_cube(self, websocket, data):
+        """Déplace un cube spécifique"""
+        cube_id = data.get("cube_id")
+        new_position = data.get("position")
+        
+        if not cube_id or not new_position:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "ID du cube et position requis"
+            }))
+            return
+        
+        success = self.world.move_cube(cube_id, new_position)
+        
+        if success:
+            await self.broadcast_to_all({
+                "type": "cube_moved",
+                "cube_id": cube_id,
+                "position": new_position
+            })
+            
+            await websocket.send(json.dumps({
+                "type": "cube_moved",
+                "cube_id": cube_id,
+                "position": new_position,
+                "success": True
+            }))
+        else:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Impossible de déplacer le cube"
+            }))
+    
+    async def handle_remove_cube(self, websocket, data):
+        """Supprime un cube"""
+        cube_id = data.get("cube_id")
+        
+        if not cube_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "ID du cube requis"
+            }))
+            return
+        
+        success = self.world.remove_cube(cube_id)
+        
+        if success:
+            await self.broadcast_to_all({
+                "type": "cube_removed",
+                "cube_id": cube_id
+            })
+            
+            await websocket.send(json.dumps({
+                "type": "cube_removed",
+                "cube_id": cube_id,
+                "success": True
+            }))
+        else:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Impossible de supprimer le cube"
+            }))
+    
+    async def handle_get_cube_info(self, websocket, data):
+        """Récupère les informations d'un cube"""
+        cube_id = data.get("cube_id")
+        
+        # Recherche dans toutes les collections
+        cube = None
+        cube_type = None
+        
+        if cube_id in self.world.cameras:
+            cube = self.world.cameras[cube_id]
+            cube_type = "camera"
+        elif cube_id in self.world.ai_agents:
+            cube = self.world.ai_agents[cube_id]
+            cube_type = "ai_agent"
+        elif cube_id in self.world.players:
+            cube = self.world.players[cube_id]
+            cube_type = "player"
+        elif cube_id in self.world.special_cubes:
+            cube = self.world.special_cubes[cube_id]
+            cube_type = "special"
+        
+        if cube:
+            await websocket.send(json.dumps({
+                "type": "cube_info",
+                "cube": cube.to_dict(),
+                "cube_type": cube_type
+            }))
+        else:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Cube introuvable"
+            }))
+    
+    async def broadcast_to_others(self, sender_websocket, message):
+        """Envoie un message à tous les clients sauf l'expéditeur"""
+        message_str = json.dumps(message)
+        disconnected = []
+        
+        for client in list(self.clients):
+            if client != sender_websocket:
+                try:
+                    await client.send(message_str)
+                except websockets.exceptions.ConnectionClosed:
+                    disconnected.append(client)
+        
+        # Nettoie les connexions fermées
+        for client in disconnected:
+            self.clients.discard(client)
     
     async def broadcast_to_all(self, message):
         """Envoie un message à tous les clients"""
