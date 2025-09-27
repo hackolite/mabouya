@@ -263,9 +263,13 @@ class World:
     def get_all_blocks(self):
         """Retourne tous les blocs (réguliers + joueurs) pour le ray-marching"""
         all_blocks = dict(self.blocks)
-        # Ajoute les joueurs comme des blocs
+        # Ajoute les joueurs comme des blocs en utilisant leurs coordonnées entières
         for player in self.players.values():
-            all_blocks[player.position] = player
+            # Convertit la position flottante du joueur en coordonnées de bloc
+            floored_pos = (int(math.floor(player.position[0])), 
+                          int(math.floor(player.position[1])), 
+                          int(math.floor(player.position[2])))
+            all_blocks[floored_pos] = player
         return all_blocks
     
     def to_dict(self):
