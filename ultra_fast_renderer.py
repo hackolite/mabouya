@@ -1,15 +1,12 @@
-"""
-Ultra Fast Camera Renderer
-==========================
-
-A minimal, ultra-fast camera renderer that prioritizes speed over visual fidelity.
-Uses depth buffer approximation and simplified rendering for real-time performance.
-"""
-
-import math
 import numpy as np
+import math
+from collections import namedtuple
+
+# --- Définition des blocs ---
+Block = namedtuple("Block", ["block_type", "camera", "movable", "traversable"])
 
 class UltraFastRenderer:
+
     """Ultra-fast camera renderer optimized for maximum performance"""
     
     def __init__(self, resolution=(240, 180)):
