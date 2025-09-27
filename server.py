@@ -244,6 +244,7 @@ class MinecraftServer:
         self.world = World(size=15)
         self.clients = set()
         self.camera_subscribers = {}  # {camera_id: set(websockets)}
+        self.player_positions = {}  # {websocket: position} to track player positions
     
     async def start(self):
         """Démarre le serveur"""
@@ -274,6 +275,9 @@ class MinecraftServer:
             # Nettoie les abonnements caméra
             for subscribers in self.camera_subscribers.values():
                 subscribers.discard(websocket)
+            # Nettoie la position du joueur
+            if websocket in self.player_positions:
+                del self.player_positions[websocket]
     
     async def handle_message(self, websocket, message):
         """Route les messages"""
@@ -293,6 +297,10 @@ class MinecraftServer:
                 await self.handle_place_block(websocket, data)
             elif msg_type == "destroy_block":
                 await self.handle_destroy_block(websocket, data)
+            elif msg_type == "player_position_update":
+                await self.handle_player_position_update(websocket, data)
+            elif msg_type == "get_player_positions":
+                await self.handle_get_player_positions(websocket)
             else:
                 await websocket.send(json.dumps({
                     "type": "error",
@@ -417,6 +425,34 @@ class MinecraftServer:
                 "type": "block_destroyed",
                 "position": list(position)
             })
+    
+    async def handle_player_position_update(self, websocket, data):
+        """Met à jour la position du joueur côté serveur"""
+        position = data.get("position", [0, 0, 0])
+        
+        # Stocke la position du joueur
+        self.player_positions[websocket] = tuple(position)
+        
+        print(f"🚶 Position joueur {websocket.remote_address} mise à jour: {position}")
+        
+        # Optionnel: Broadcast aux autres clients pour le multijoueur
+        # Pour l'instant, on log juste la position côté serveur
+    
+    async def handle_get_player_positions(self, websocket):
+        """Renvoie les positions de tous les joueurs connectés"""
+        positions = {}
+        for ws, pos in self.player_positions.items():
+            # Use a simple identifier for each client
+            client_id = f"player_{id(ws)}"
+            positions[client_id] = list(pos)
+        
+        await websocket.send(json.dumps({
+            "type": "player_positions",
+            "positions": positions,
+            "count": len(positions)
+        }))
+        
+        print(f"📊 Envoyé positions de {len(positions)} joueurs à {websocket.remote_address}")
     
     async def broadcast_to_all(self, message):
         """Envoie un message à tous les clients"""

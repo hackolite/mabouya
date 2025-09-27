@@ -452,6 +452,12 @@ class MinecraftWindow(pyglet.window.Window):
         # Update player cube if position changed
         if old_position != self.position:
             self._update_player_cube()
+            # Send position update to server
+            if hasattr(self, 'network') and self.network.connected:
+                self.network.send_message({
+                    "type": "player_position_update",
+                    "position": list(self.position)
+                })
         
         # Mise à jour labels
         x, y, z = self.position
