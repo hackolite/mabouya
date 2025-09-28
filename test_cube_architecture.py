@@ -86,6 +86,47 @@ async def test_cube_architecture():
                 data = json.loads(response)
                 print(f"✅ Contrôle IA: {data.get('success', False)}")
             
+            # Test 7: Tests des fenêtres de caméra (si on a un ID de caméra)
+            if camera_id:
+                print(f"\n🪟 Test fenêtres caméra {camera_id}...")
+                
+                # Test statut fenêtre
+                await websocket.send(json.dumps({
+                    "type": "get_camera_window_status",
+                    "camera_id": camera_id
+                }))
+                response = await websocket.recv()
+                data = json.loads(response)
+                print(f"✅ Statut fenêtre: has_window={data.get('has_window', False)}")
+                
+                # Test activation fenêtre
+                await websocket.send(json.dumps({
+                    "type": "activate_camera_window",
+                    "camera_id": camera_id
+                }))
+                response = await websocket.recv()
+                data = json.loads(response)
+                print(f"✅ Activation fenêtre: success={data.get('success', False)}")
+                
+                # Test capture d'image
+                await websocket.send(json.dumps({
+                    "type": "capture_camera_window",
+                    "camera_id": camera_id
+                }))
+                response = await websocket.recv()
+                data = json.loads(response)
+                frame_available = data.get('frame_data') is not None
+                print(f"✅ Capture image: frame_available={frame_available}")
+                
+                # Test désactivation fenêtre
+                await websocket.send(json.dumps({
+                    "type": "deactivate_camera_window",
+                    "camera_id": camera_id
+                }))
+                response = await websocket.recv()
+                data = json.loads(response)
+                print(f"✅ Désactivation fenêtre: success={data.get('success', True)}")
+            
             print("\n🎉 Tests terminés avec succès!")
             
     except Exception as e:

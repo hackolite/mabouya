@@ -41,6 +41,14 @@ except ImportError as e:
 # Pyglet renderer availability will be checked at runtime
 HAS_PYGLET_RENDERER = False
 
+# Import cube window functionality
+try:
+    from cube_windows import PygletCameraWindow
+    HAS_CUBE_WINDOWS = True
+except ImportError as e:
+    HAS_CUBE_WINDOWS = False
+    print(f"⚠️ Cube windows not available: {e}")
+
 class Cube:
     """Cube de base - classe centrale dont héritent tous les autres cubes"""
     def __init__(self, position, block_type="grass", texture=None, size=(1, 1, 1), 
@@ -53,6 +61,9 @@ class Cube:
         self.is_moveable = is_moveable
         self.is_traversable = is_traversable
         self.id = f"cube_{position[0]}_{position[1]}_{position[2]}_{block_type}"
+        
+        # Abstraction windows - Each cube can have an associated window
+        self.windows = None  # Will be set by subclasses that need window functionality
         
     def move_to(self, new_position):
         """Déplace le cube vers une nouvelle position"""
@@ -151,6 +162,17 @@ class CubeCamera(Cube):
         
         self._world_cache_hash = None  # Cache world state to avoid rebuilding geometry every frame
         
+        # Initialize window functionality for camera visualization
+        if HAS_CUBE_WINDOWS:
+            try:
+                self.windows = PygletCameraWindow(self.id, self)
+                print(f"✅ Caméra {self.name} window initialized")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize window for camera {self.name}: {e}")
+                self.windows = None
+        else:
+            self.windows = None
+        
     def rotate(self, yaw_delta, pitch_delta):
         """Rotation de la caméra"""
         self.rotation[0] += yaw_delta
@@ -170,6 +192,54 @@ class CubeCamera(Cube):
             return "Pyglet Renderer"
         else:
             return "Original Ray Tracing"
+    
+    def activate_window(self):
+        """Active la fenêtre Pyglet pour visualisation de la caméra"""
+        if self.windows:
+            try:
+                self.windows.activate()
+                print(f"✅ Window activated for camera {self.name}")
+                return True
+            except Exception as e:
+                print(f"⚠️ Failed to activate window for camera {self.name}: {e}")
+                return False
+        else:
+            print(f"⚠️ No window available for camera {self.name}")
+            return False
+    
+    def deactivate_window(self):
+        """Désactive la fenêtre Pyglet de la caméra"""
+        if self.windows:
+            try:
+                self.windows.deactivate()
+                print(f"✅ Window deactivated for camera {self.name}")
+                return True
+            except Exception as e:
+                print(f"⚠️ Failed to deactivate window for camera {self.name}: {e}")
+                return False
+        return True
+    
+    def capture_window_frame(self):
+        """Capture une image de la fenêtre de la caméra"""
+        if self.windows and self.windows.is_active:
+            try:
+                frame_data = self.windows.capture_frame()
+                if frame_data:
+                    print(f"✅ Frame captured from camera {self.name} window")
+                    return frame_data
+                else:
+                    print(f"⚠️ No frame data captured from camera {self.name}")
+                    return None
+            except Exception as e:
+                print(f"⚠️ Failed to capture frame from camera {self.name}: {e}")
+                return None
+        else:
+            print(f"⚠️ Window not active for camera {self.name}")
+            return None
+    
+    def is_window_active(self):
+        """Vérifie si la fenêtre de la caméra est active"""
+        return self.windows and self.windows.is_active
     
     def render_view(self, world, frame_count=0):
         """Génère une vue de la caméra en regardant réellement le monde (ultra-optimisé)"""
@@ -764,6 +834,14 @@ class MinecraftServer:
                 await self.handle_remove_cube(websocket, data)
             elif msg_type == "get_cube_info":
                 await self.handle_get_cube_info(websocket, data)
+            elif msg_type == "activate_camera_window":
+                await self.handle_activate_camera_window(websocket, data)
+            elif msg_type == "deactivate_camera_window":
+                await self.handle_deactivate_camera_window(websocket, data)
+            elif msg_type == "capture_camera_window":
+                await self.handle_capture_camera_window(websocket, data)
+            elif msg_type == "get_camera_window_status":
+                await self.handle_get_camera_window_status(websocket, data)
             elif msg_type == "place_block":
                 await self.handle_place_block(websocket, data)
             elif msg_type == "destroy_block":
@@ -1138,6 +1216,150 @@ class MinecraftServer:
             await websocket.send(json.dumps({
                 "type": "error",
                 "message": "Cube introuvable"
+            }))
+    
+    async def handle_activate_camera_window(self, websocket, data):
+        """Active la fenêtre d'une caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error", 
+                "message": "camera_id requis"
+            }))
+            return
+        
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            success = camera.activate_window()
+            await websocket.send(json.dumps({
+                "type": "camera_window_activated",
+                "camera_id": camera_id,
+                "success": success,
+                "window_active": camera.is_window_active()
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur activation fenêtre: {str(e)}"
+            }))
+    
+    async def handle_deactivate_camera_window(self, websocket, data):
+        """Désactive la fenêtre d'une caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "camera_id requis"
+            }))
+            return
+            
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            success = camera.deactivate_window()
+            await websocket.send(json.dumps({
+                "type": "camera_window_deactivated",
+                "camera_id": camera_id,
+                "success": success,
+                "window_active": camera.is_window_active()
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur désactivation fenêtre: {str(e)}"
+            }))
+    
+    async def handle_capture_camera_window(self, websocket, data):
+        """Capture une image de la fenêtre de caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "camera_id requis" 
+            }))
+            return
+            
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            frame_data = camera.capture_window_frame()
+            
+            if frame_data:
+                # Encode frame data as base64 for transmission
+                import base64
+                frame_b64 = base64.b64encode(frame_data).decode('utf-8')
+                
+                await websocket.send(json.dumps({
+                    "type": "camera_window_frame",
+                    "camera_id": camera_id,
+                    "frame_data": frame_b64,
+                    "resolution": camera.resolution,
+                    "format": "RGB"
+                }))
+            else:
+                await websocket.send(json.dumps({
+                    "type": "camera_window_frame",
+                    "camera_id": camera_id,
+                    "frame_data": None,
+                    "message": "Aucune données de frame disponible"
+                }))
+                
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur capture fenêtre: {str(e)}"
+            }))
+    
+    async def handle_get_camera_window_status(self, websocket, data):
+        """Obtient le statut de la fenêtre d'une caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "camera_id requis"
+            }))
+            return
+            
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error", 
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            await websocket.send(json.dumps({
+                "type": "camera_window_status",
+                "camera_id": camera_id,
+                "window_active": camera.is_window_active(),
+                "has_window": camera.windows is not None,
+                "camera_name": camera.name,
+                "resolution": camera.resolution
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur statut fenêtre: {str(e)}"
             }))
     
     async def broadcast_to_others(self, sender_websocket, message):
