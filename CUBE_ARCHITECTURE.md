@@ -25,6 +25,7 @@ class Cube:
 - `is_moveable`: Booléen - si le cube peut être déplacé
 - `is_traversable`: Booléen - si on peut passer à travers
 - `id`: Identifiant unique généré automatiquement
+- `windows`: Abstraction pour fenêtres associées au cube (None par défaut)
 
 **Méthodes principales:**
 - `move_to(new_position)`: Déplace le cube (si moveable)
@@ -50,11 +51,17 @@ class CubeCamera(Cube):
 - `rotate(yaw_delta, pitch_delta)`: Rotation de la caméra
 - `render_view(world, frame_count)`: Génère la vue caméra
 - `move_camera(new_position)`: Déplacement spécialisé caméra
+- `activate_window()`: Active la fenêtre Pyglet de visualisation
+- `deactivate_window()`: Désactive la fenêtre Pyglet
+- `capture_window_frame()`: Capture une image de la fenêtre
+- `is_window_active()`: Vérifie si la fenêtre est active
 
 **Fonctionnalités:**
 - Streaming vidéo via WebSocket
 - Ray marching pour rendu réaliste
 - Indicateurs visuels (LED live, compteur de frames)
+- Fenêtre Pyglet pour visualisation interactive
+- Capture d'images via l'API WebSocket
 - API dédiée pour contrôle
 
 ### 3. Classe CubeAI (Hérite de Cube)
@@ -129,6 +136,13 @@ class World:
 - `control_camera`: Contrôle rotation/mouvement caméra
 - `get_cameras`: Liste toutes les caméras
 
+### Endpoints pour Fenêtres de Caméra
+
+- `activate_camera_window`: Active la fenêtre Pyglet d'une caméra
+- `deactivate_camera_window`: Désactive la fenêtre d'une caméra  
+- `capture_camera_window`: Capture une image de la fenêtre caméra
+- `get_camera_window_status`: Obtient le statut de la fenêtre d'une caméra
+
 ### Endpoints pour Agents IA
 
 - `create_ai_agent`: Crée un nouvel agent IA
@@ -152,6 +166,34 @@ class World:
     "position": [10, 5, 10],
     "name": "SecurityCam1",
     "resolution": [640, 480]
+}
+```
+
+### Contrôle de fenêtre caméra
+
+```python
+# Activer la fenêtre de visualisation Pyglet
+{
+    "type": "activate_camera_window",
+    "camera_id": "cam_12345..."
+}
+
+# Capturer une image de la fenêtre
+{
+    "type": "capture_camera_window", 
+    "camera_id": "cam_12345..."
+}
+
+# Vérifier le statut de la fenêtre
+{
+    "type": "get_camera_window_status",
+    "camera_id": "cam_12345..."
+}
+
+# Désactiver la fenêtre
+{
+    "type": "deactivate_camera_window",
+    "camera_id": "cam_12345..."
 }
 ```
 

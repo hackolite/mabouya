@@ -834,6 +834,14 @@ class MinecraftServer:
                 await self.handle_remove_cube(websocket, data)
             elif msg_type == "get_cube_info":
                 await self.handle_get_cube_info(websocket, data)
+            elif msg_type == "activate_camera_window":
+                await self.handle_activate_camera_window(websocket, data)
+            elif msg_type == "deactivate_camera_window":
+                await self.handle_deactivate_camera_window(websocket, data)
+            elif msg_type == "capture_camera_window":
+                await self.handle_capture_camera_window(websocket, data)
+            elif msg_type == "get_camera_window_status":
+                await self.handle_get_camera_window_status(websocket, data)
             elif msg_type == "place_block":
                 await self.handle_place_block(websocket, data)
             elif msg_type == "destroy_block":
@@ -1208,6 +1216,150 @@ class MinecraftServer:
             await websocket.send(json.dumps({
                 "type": "error",
                 "message": "Cube introuvable"
+            }))
+    
+    async def handle_activate_camera_window(self, websocket, data):
+        """Active la fenêtre d'une caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error", 
+                "message": "camera_id requis"
+            }))
+            return
+        
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            success = camera.activate_window()
+            await websocket.send(json.dumps({
+                "type": "camera_window_activated",
+                "camera_id": camera_id,
+                "success": success,
+                "window_active": camera.is_window_active()
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur activation fenêtre: {str(e)}"
+            }))
+    
+    async def handle_deactivate_camera_window(self, websocket, data):
+        """Désactive la fenêtre d'une caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "camera_id requis"
+            }))
+            return
+            
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            success = camera.deactivate_window()
+            await websocket.send(json.dumps({
+                "type": "camera_window_deactivated",
+                "camera_id": camera_id,
+                "success": success,
+                "window_active": camera.is_window_active()
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur désactivation fenêtre: {str(e)}"
+            }))
+    
+    async def handle_capture_camera_window(self, websocket, data):
+        """Capture une image de la fenêtre de caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "camera_id requis" 
+            }))
+            return
+            
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            frame_data = camera.capture_window_frame()
+            
+            if frame_data:
+                # Encode frame data as base64 for transmission
+                import base64
+                frame_b64 = base64.b64encode(frame_data).decode('utf-8')
+                
+                await websocket.send(json.dumps({
+                    "type": "camera_window_frame",
+                    "camera_id": camera_id,
+                    "frame_data": frame_b64,
+                    "resolution": camera.resolution,
+                    "format": "RGB"
+                }))
+            else:
+                await websocket.send(json.dumps({
+                    "type": "camera_window_frame",
+                    "camera_id": camera_id,
+                    "frame_data": None,
+                    "message": "Aucune données de frame disponible"
+                }))
+                
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur capture fenêtre: {str(e)}"
+            }))
+    
+    async def handle_get_camera_window_status(self, websocket, data):
+        """Obtient le statut de la fenêtre d'une caméra"""
+        camera_id = data.get("camera_id")
+        if not camera_id:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": "camera_id requis"
+            }))
+            return
+            
+        camera = self.world.cameras.get(camera_id)
+        if not camera:
+            await websocket.send(json.dumps({
+                "type": "error", 
+                "message": "Caméra introuvable"
+            }))
+            return
+            
+        try:
+            await websocket.send(json.dumps({
+                "type": "camera_window_status",
+                "camera_id": camera_id,
+                "window_active": camera.is_window_active(),
+                "has_window": camera.windows is not None,
+                "camera_name": camera.name,
+                "resolution": camera.resolution
+            }))
+        except Exception as e:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Erreur statut fenêtre: {str(e)}"
             }))
     
     async def broadcast_to_others(self, sender_websocket, message):
